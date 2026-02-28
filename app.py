@@ -12,6 +12,8 @@ import plotly.graph_objects as go
 import requests
 from typing import Optional, Dict, Any
 import time
+import numpy as np
+from scipy import stats
 
 
 # ============================================================================
@@ -25,6 +27,115 @@ ERGAST_API_BASE_URL = "https://api.jolpi.ca/ergast/f1"
 REQUEST_TIMEOUT = 10  # seconds
 MAX_RETRIES = 3
 RETRY_DELAY = 1  # seconds
+
+
+# ============================================================================
+# ANALYTICS HELPER FUNCTIONS
+# ============================================================================
+
+def safe_int(value: Any, default: int = 0) -> int:
+    """
+    Safely convert value to int with DNF handling.
+    
+    Args:
+        value: Value to convert (may be string, int, or DNF indicator)
+        default: Default value to return if conversion fails
+        
+    Returns:
+        Integer value or default if conversion fails
+    """
+    try:
+        if value == 'R' or value == 'W':  # DNF indicators
+            return default
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_float(value: Any, default: float = 0.0) -> float:
+    """
+    Safely convert value to float.
+    
+    Args:
+        value: Value to convert
+        default: Default value to return if conversion fails
+        
+    Returns:
+        Float value or default if conversion fails
+    """
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> float:
+    """
+    Safely perform division with zero-denominator handling.
+    
+    Args:
+        numerator: Numerator value
+        denominator: Denominator value
+        default: Default value to return if denominator is zero
+        
+    Returns:
+        Division result or default if denominator is zero
+    """
+    if denominator == 0:
+        return default
+    return numerator / denominator
+
+
+def is_dnf(status: str) -> bool:
+    """
+    Check if race status indicates DNF (Did Not Finish).
+    
+    Args:
+        status: Race status string from API
+        
+    Returns:
+        True if status indicates DNF, False otherwise
+    """
+    dnf_statuses = [
+        'Accident', 'Engine', 'Gearbox', 'Transmission', 'Clutch',
+        'Hydraulics', 'Electrical', 'Collision', 'Spun off', 'Retired',
+        'Mechanical', 'Brakes', 'Suspension', 'Fuel pressure', 'Overheating'
+    ]
+    return status in dnf_statuses or status.startswith('+')
+
+
+def safe_correlation(x: list, y: list) -> Optional[float]:
+    """
+    Safely calculate Pearson correlation coefficient with variance checking.
+    
+    Args:
+        x: First variable (list of numeric values)
+        y: Second variable (list of numeric values)
+        
+    Returns:
+        Correlation coefficient (-1 to 1) or None if calculation fails
+    """
+    if len(x) < 2 or len(y) < 2:
+        return None
+    
+    if len(x) != len(y):
+        return None
+    
+    # Check for sufficient variance
+    if np.std(x) == 0 or np.std(y) == 0:
+        st.warning("Cannot calculate correlation: one or both variables have zero variance.")
+        return None
+    
+    try:
+        correlation = np.corrcoef(x, y)[0, 1]
+        return correlation
+    except Exception:
+        return None
+
+
+# ============================================================================
+# DATA ACCESS LAYER (continued)
+# ============================================================================
 
 
 def fetch_with_retry(url: str, max_retries: int = MAX_RETRIES, timeout: int = REQUEST_TIMEOUT) -> Optional[Dict[str, Any]]:
@@ -804,6 +915,403 @@ def calculate_constructor_statistics(race_results: Optional[list]) -> Dict[str, 
     }
 
 
+# ============================================================================
+# ANALYTICS CALCULATION LAYER
+# ============================================================================
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_performance_trends(
+    race_results: list,
+    metric: str = "position"
+) -> pd.DataFrame:
+    """
+    Calculate performance trends over time.
+    
+    Args:
+        race_results: List of race result dicts from API
+        metric: Which metric to track ("position" or "points")
+    
+    Returns:
+        DataFrame with columns: race_name, race_date, round, metric_value
+    """
+    if not race_results:
+        return pd.DataFrame(columns=['race_name', 'race_date', 'round', 'metric_value'])
+    
+    trends_data = []
+    
+    for race in race_results:
+        race_name = race.get('raceName', 'Unknown')
+        race_date = race.get('date', '')
+        race_round = safe_int(race.get('round', 0))
+        
+        results = race.get('Results', [])
+        if results:
+            result = results[0]  # Driver's result in this race
+            
+            if metric == "position":
+                # Get finishing position
+                position = result.get('position', 'R')
+                metric_value = safe_int(position, default=None)
+            else:  # points
+                # Get points scored
+                points = result.get('points', '0')
+                metric_value = safe_float(points, default=0.0)
+            
+            trends_data.append({
+                'race_name': race_name,
+                'race_date': race_date,
+                'round': race_round,
+                'metric_value': metric_value
+            })
+    
+    return pd.DataFrame(trends_data)
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_consistency_score(
+    race_results: list,
+    min_races: int = 5
+) -> Optional[Dict[str, float]]:
+    """
+    Calculate consistency metrics for a driver.
+    
+    Args:
+        race_results: List of race result dicts from API
+        min_races: Minimum completed races required
+    
+    Returns:
+        Dict with keys: consistency_score (0-100), std_dev, avg_position,
+        completed_races, total_races, or None if insufficient data
+    """
+    if not race_results:
+        return None
+    
+    # Extract finishing positions for completed races only
+    positions = []
+    total_races = len(race_results)
+    
+    for race in race_results:
+        results = race.get('Results', [])
+        if results:
+            result = results[0]
+            status = result.get('status', '')
+            position = result.get('position', 'R')
+            
+            # Only include finished races (exclude DNFs)
+            if not is_dnf(status) and position != 'R':
+                pos_int = safe_int(position, default=None)
+                if pos_int is not None and pos_int > 0:
+                    positions.append(pos_int)
+    
+    completed_races = len(positions)
+    
+    # Check if we have enough data
+    if completed_races < min_races:
+        st.warning(f"Insufficient data: {completed_races} completed races found. "
+                  f"Minimum {min_races} races required for consistency analysis.")
+        return None
+    
+    # Calculate statistics
+    avg_position = np.mean(positions)
+    std_dev = np.std(positions)
+    
+    # Calculate consistency score (0-100 scale)
+    # Lower std_dev = higher consistency
+    # Formula: 100 - (std_dev * 10), capped at 0
+    consistency_score = max(0, 100 - (std_dev * 10))
+    
+    return {
+        'consistency_score': round(consistency_score, 1),
+        'std_dev': round(std_dev, 2),
+        'avg_position': round(avg_position, 2),
+        'completed_races': completed_races,
+        'total_races': total_races
+    }
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_dnf_rate(
+    race_results: list,
+    time_period: str = "season"
+) -> Dict[str, Any]:
+    """
+    Calculate DNF rate and categorization.
+    
+    Args:
+        race_results: List of race result dicts from API
+        time_period: Time period for calculation (currently unused, for future extension)
+    
+    Returns:
+        Dict with keys: dnf_percentage, dnf_count, total_races,
+        dnf_causes (dict of cause: count)
+    """
+    if not race_results:
+        return {
+            'dnf_percentage': 0.0,
+            'dnf_count': 0,
+            'total_races': 0,
+            'dnf_causes': {}
+        }
+    
+    total_races = len(race_results)
+    dnf_count = 0
+    dnf_causes = {}
+    
+    for race in race_results:
+        results = race.get('Results', [])
+        if results:
+            result = results[0]
+            status = result.get('status', 'Finished')
+            
+            if is_dnf(status):
+                dnf_count += 1
+                
+                # Categorize DNF cause
+                # Group similar causes together
+                if status in ['Engine', 'Gearbox', 'Transmission', 'Clutch', 
+                             'Hydraulics', 'Electrical', 'Mechanical', 'Brakes',
+                             'Suspension', 'Fuel pressure', 'Overheating']:
+                    cause = 'Mechanical'
+                elif status in ['Accident', 'Collision', 'Spun off']:
+                    cause = 'Accident'
+                else:
+                    cause = 'Other'
+                
+                dnf_causes[cause] = dnf_causes.get(cause, 0) + 1
+    
+    # Calculate percentage
+    dnf_percentage = safe_divide(dnf_count * 100, total_races, default=0.0)
+    
+    return {
+        'dnf_percentage': round(dnf_percentage, 1),
+        'dnf_count': dnf_count,
+        'total_races': total_races,
+        'dnf_causes': dnf_causes
+    }
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_points_per_race(
+    race_results: list,
+    exclude_dnf: bool = False
+) -> Dict[str, float]:
+    """
+    Calculate points per race averages.
+    
+    Args:
+        race_results: List of race result dicts from API
+        exclude_dnf: Whether to exclude DNF races from calculation
+    
+    Returns:
+        Dict with keys: points_per_race, total_points, races_counted
+    """
+    if not race_results:
+        return {
+            'points_per_race': 0.0,
+            'total_points': 0.0,
+            'races_counted': 0
+        }
+    
+    total_points = 0.0
+    races_counted = 0
+    
+    for race in race_results:
+        results = race.get('Results', [])
+        if results:
+            result = results[0]
+            status = result.get('status', 'Finished')
+            points = safe_float(result.get('points', '0'), default=0.0)
+            
+            # If excluding DNFs, skip DNF races
+            if exclude_dnf and is_dnf(status):
+                continue
+            
+            total_points += points
+            races_counted += 1
+    
+    # Calculate points per race
+    points_per_race = safe_divide(total_points, races_counted, default=0.0)
+    
+    return {
+        'points_per_race': round(points_per_race, 2),
+        'total_points': round(total_points, 1),
+        'races_counted': races_counted
+    }
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_qualifying_race_correlation(
+    race_results: list,
+    min_races: int = 5
+) -> Dict[str, Any]:
+    """
+    Calculate correlation between qualifying and race performance.
+    
+    Args:
+        race_results: List of race result dicts from API
+        min_races: Minimum races required for correlation
+    
+    Returns:
+        Dict with keys: correlation_coefficient, avg_position_change,
+        classification, scatter_data (list of {grid, finish} dicts),
+        races_analyzed, missing_data_count, or None if insufficient data
+    """
+    if not race_results:
+        return None
+    
+    # Extract grid and finish positions
+    grid_positions = []
+    finish_positions = []
+    scatter_data = []
+    missing_data_count = 0
+    
+    for race in race_results:
+        results = race.get('Results', [])
+        if results:
+            result = results[0]
+            grid = result.get('grid', None)
+            position = result.get('position', None)
+            status = result.get('status', 'Finished')
+            
+            # Track races with missing qualifying or race data
+            if not grid or not position or is_dnf(status):
+                if not grid or not position:
+                    missing_data_count += 1
+                continue
+            
+            # Only include races with valid grid and finish data
+            grid_int = safe_int(grid, default=None)
+            position_int = safe_int(position, default=None)
+            
+            if grid_int is not None and position_int is not None:
+                grid_positions.append(grid_int)
+                finish_positions.append(position_int)
+                scatter_data.append({
+                    'grid': grid_int,
+                    'finish': position_int,
+                    'race_name': race.get('raceName', 'Unknown')
+                })
+            else:
+                missing_data_count += 1
+    
+    # Check if we have enough data
+    if len(grid_positions) < min_races:
+        return {
+            'correlation_coefficient': None,
+            'avg_position_change': 0.0,
+            'classification': 'insufficient data',
+            'scatter_data': scatter_data,
+            'races_analyzed': len(grid_positions),
+            'missing_data_count': missing_data_count,
+            'insufficient_data': True
+        }
+    
+    # Calculate correlation coefficient
+    correlation = safe_correlation(grid_positions, finish_positions)
+    
+    # Calculate average position change (negative = gained positions)
+    position_changes = [finish - grid for grid, finish in zip(grid_positions, finish_positions)]
+    avg_position_change = sum(position_changes) / len(position_changes) if position_changes else 0.0
+    
+    # Classify driver performance based on correlation
+    if correlation is None:
+        classification = "insufficient data"
+    elif correlation < -0.3:
+        classification = "strong race performer"
+    elif correlation > 0.7:
+        classification = "qualifying-dependent performer"
+    else:
+        classification = "balanced performer"
+    
+    return {
+        'correlation_coefficient': round(correlation, 3) if correlation is not None else None,
+        'avg_position_change': round(avg_position_change, 2),
+        'classification': classification,
+        'scatter_data': scatter_data,
+        'races_analyzed': len(grid_positions),
+        'missing_data_count': missing_data_count,
+        'insufficient_data': False
+    }
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_form_indicator(
+    race_results: list,
+    n_races: int = 5
+) -> Dict[str, Any]:
+    """
+    Calculate recent form indicators.
+    
+    Args:
+        race_results: List of race result dicts from API (most recent first)
+        n_races: Number of recent races to analyze
+    
+    Returns:
+        Dict with keys: avg_position, total_points, trend_direction,
+        trend_slope, races_analyzed
+    """
+    if not race_results:
+        return None
+    
+    # Take only the most recent n races
+    recent_races = race_results[:n_races]
+    
+    positions = []
+    total_points = 0.0
+    races_analyzed = 0
+    
+    for race in recent_races:
+        results = race.get('Results', [])
+        if results:
+            result = results[0]
+            position = result.get('position', None)
+            points = safe_float(result.get('points', '0'), default=0.0)
+            status = result.get('status', 'Finished')
+            
+            # Only include finished races for position analysis
+            if position and not is_dnf(status):
+                position_int = safe_int(position, default=None)
+                if position_int is not None:
+                    positions.append(position_int)
+                    total_points += points
+                    races_analyzed += 1
+    
+    if not positions:
+        return None
+    
+    # Calculate average position
+    avg_position = sum(positions) / len(positions)
+    
+    # Calculate trend using linear regression
+    # x = race index (0, 1, 2, ...), y = position
+    # Negative slope = improving (lower positions over time)
+    # Positive slope = declining (higher positions over time)
+    if len(positions) >= 2:
+        x = list(range(len(positions)))
+        # Use numpy for linear regression
+        import numpy as np
+        slope, _ = np.polyfit(x, positions, 1)
+        
+        # Classify trend based on slope
+        # Threshold of 0.3 positions per race
+        if abs(slope) < 0.3:
+            trend_direction = "stable"
+        elif slope < 0:
+            trend_direction = "improving"
+        else:
+            trend_direction = "declining"
+    else:
+        slope = 0.0
+        trend_direction = "stable"
+    
+    return {
+        'avg_position': round(avg_position, 2),
+        'total_points': round(total_points, 1),
+        'trend_direction': trend_direction,
+        'trend_slope': round(slope, 3),
+        'races_analyzed': races_analyzed
+    }
+
 
 # ============================================================================
 # UI HELPER FUNCTIONS
@@ -927,6 +1435,239 @@ def create_championship_progression_chart(df: pd.DataFrame, selected_drivers: li
         line=dict(width=3),
         marker=dict(size=8)
     )
+    
+    return fig
+
+
+# ============================================================================
+# ANALYTICS VISUALIZATION LAYER
+# ============================================================================
+
+def create_analytics_trend_chart(
+    trend_data: pd.DataFrame,
+    metric_name: str,
+    driver_name: str,
+    team_color: str = None
+) -> go.Figure:
+    """
+    Create line chart for performance trends.
+    
+    Args:
+        trend_data: DataFrame with race_name, round, metric_value columns
+        metric_name: Display name for the metric
+        driver_name: Driver name for title
+        team_color: Optional team color for line
+    
+    Returns:
+        Plotly Figure object with interactive line chart
+    """
+    if trend_data.empty:
+        # Return empty figure with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No data available",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16)
+        )
+        return fig
+    
+    # Use team color if provided, otherwise use F1 red
+    line_color = team_color if team_color else '#E10600'
+    
+    # Create the line chart
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=trend_data['round'],
+        y=trend_data['metric_value'],
+        mode='lines+markers',
+        name=driver_name,
+        line=dict(color=line_color, width=3),
+        marker=dict(size=8, color=line_color),
+        customdata=trend_data[['race_name', 'race_date']].values,
+        hovertemplate=(
+            '<b>%{customdata[0]}</b><br>' +
+            'Date: %{customdata[1]}<br>' +
+            f'{metric_name}: %{{y}}<br>' +
+            '<extra></extra>'
+        )
+    ))
+    
+    # Update layout with F1 styling
+    fig.update_layout(
+        title=f"{driver_name} - {metric_name} Trend",
+        xaxis_title="Race Round",
+        yaxis_title=metric_name,
+        hovermode='closest',
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(size=12),
+        title_font=dict(size=16, color='#E10600'),
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=12,
+            font_family="sans-serif"
+        ),
+        xaxis=dict(
+            tickmode='linear',
+            tick0=1,
+            dtick=1,
+            gridcolor='rgba(128,128,128,0.2)'
+        ),
+        yaxis=dict(
+            gridcolor='rgba(128,128,128,0.2)'
+        ),
+        height=400
+    )
+    
+    return fig
+
+
+def create_analytics_scatter_chart(
+    scatter_data: list,
+    x_label: str,
+    y_label: str,
+    title: str,
+    correlation: float = None
+) -> go.Figure:
+    """
+    Create scatter plot with optional trend line.
+    
+    Args:
+        scatter_data: List of dicts with 'grid' and 'finish' keys (or x/y keys)
+        x_label: X-axis label
+        y_label: Y-axis label
+        title: Chart title
+        correlation: Optional correlation coefficient for trend line
+    
+    Returns:
+        Plotly Figure object with scatter plot
+    """
+    if not scatter_data:
+        # Return empty figure with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No data available",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16)
+        )
+        return fig
+    
+    # Extract x and y values (handle both 'grid'/'finish' and 'x'/'y' keys)
+    x_values = []
+    y_values = []
+    
+    for point in scatter_data:
+        if 'grid' in point and 'finish' in point:
+            x_values.append(safe_int(point['grid']))
+            y_values.append(safe_int(point['finish']))
+        elif 'x' in point and 'y' in point:
+            x_values.append(safe_float(point['x']))
+            y_values.append(safe_float(point['y']))
+    
+    if not x_values or not y_values:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="Insufficient data for scatter plot",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16)
+        )
+        return fig
+    
+    # Create the scatter plot
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=x_values,
+        y=y_values,
+        mode='markers',
+        marker=dict(
+            size=10,
+            color='#E10600',
+            opacity=0.6,
+            line=dict(width=1, color='#8B0000')
+        ),
+        name='Data Points',
+        hovertemplate=(
+            f'{x_label}: %{{x}}<br>' +
+            f'{y_label}: %{{y}}<br>' +
+            '<extra></extra>'
+        )
+    ))
+    
+    # Add trend line if correlation is provided
+    if correlation is not None and len(x_values) >= 2:
+        # Calculate linear regression
+        x_array = np.array(x_values)
+        y_array = np.array(y_values)
+        
+        # Only add trend line if there's variance in both variables
+        if np.std(x_array) > 0 and np.std(y_array) > 0:
+            z = np.polyfit(x_array, y_array, 1)
+            p = np.poly1d(z)
+            
+            # Create trend line points
+            x_trend = np.linspace(min(x_values), max(x_values), 100)
+            y_trend = p(x_trend)
+            
+            fig.add_trace(go.Scatter(
+                x=x_trend,
+                y=y_trend,
+                mode='lines',
+                line=dict(color='#FF6B00', width=2, dash='dash'),
+                name=f'Trend Line (r={correlation:.2f})',
+                hovertemplate='Trend Line<extra></extra>'
+            ))
+    
+    # Update layout
+    fig.update_layout(
+        title=title,
+        xaxis_title=x_label,
+        yaxis_title=y_label,
+        hovermode='closest',
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(size=12),
+        title_font=dict(size=16, color='#E10600'),
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=12,
+            font_family="sans-serif"
+        ),
+        xaxis=dict(
+            gridcolor='rgba(128,128,128,0.2)',
+            zeroline=False
+        ),
+        yaxis=dict(
+            gridcolor='rgba(128,128,128,0.2)',
+            zeroline=False
+        ),
+        height=500,
+        showlegend=True,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="right",
+            x=0.99
+        )
+    )
+    
+    # Add correlation annotation if provided
+    if correlation is not None:
+        fig.add_annotation(
+            text=f"Correlation: {correlation:.3f}",
+            xref="paper", yref="paper",
+            x=0.02, y=0.98,
+            showarrow=False,
+            font=dict(size=14, color='#E10600'),
+            bgcolor='rgba(255,255,255,0.8)',
+            bordercolor='#E10600',
+            borderwidth=1,
+            borderpad=4
+        )
     
     return fig
 
@@ -1832,6 +2573,452 @@ def render_constructor_profile_page(constructor_name: str, year: str = "current"
 
 
 # ============================================================================
+# ANALYTICS PAGE RENDERING
+# ============================================================================
+
+def render_analytics_main_page(year: str = "current"):
+    """
+    Main analytics page with subsection navigation.
+    
+    Displays:
+    - Subsection selector (tabs)
+    - Conditional rendering of selected subsection
+    
+    Args:
+        year: Season year to analyze
+    """
+    st.header("📊 Advanced Analytics")
+    st.markdown("Deep dive into F1 performance data with advanced statistical analysis")
+    
+    # Initialize session state for preserving user selections
+    if 'analytics_driver' not in st.session_state:
+        st.session_state.analytics_driver = None
+    if 'analytics_team' not in st.session_state:
+        st.session_state.analytics_team = None
+    if 'analytics_circuit' not in st.session_state:
+        st.session_state.analytics_circuit = None
+    if 'analytics_season' not in st.session_state:
+        st.session_state.analytics_season = year
+    
+    # Create subsection tabs
+    analytics_tabs = st.tabs([
+        "🏎️ Driver Analytics",
+        "🏗️ Team Analytics", 
+        "🏁 Circuit Analytics",
+        "⚔️ Comparative Analytics",
+        "📈 Statistical Insights"
+    ])
+    
+    with analytics_tabs[0]:
+        render_analytics_driver_subsection(year)
+    
+    with analytics_tabs[1]:
+        render_analytics_team_subsection(year)
+    
+    with analytics_tabs[2]:
+        render_analytics_circuit_subsection(year)
+    
+    with analytics_tabs[3]:
+        render_analytics_comparative_subsection(year)
+    
+    with analytics_tabs[4]:
+        render_analytics_statistical_subsection(year)
+
+
+def render_analytics_driver_subsection(year: str = "current"):
+    """
+    Driver analytics subsection with all visualizations.
+    
+    Args:
+        year: Season year to analyze
+    """
+    st.subheader("Driver Analytics")
+    
+    # Fetch driver standings to populate selector
+    driver_standings = fetch_driver_standings(year)
+    
+    if not driver_standings:
+        st.error("Unable to load driver standings. Please try again later.")
+        return
+    
+    # Create driver options for selector
+    driver_options = {}
+    for standing in driver_standings:
+        driver = standing.get('Driver', {})
+        driver_id = driver.get('driverId', '')
+        driver_name = f"{driver.get('givenName', '')} {driver.get('familyName', '')}"
+        constructor = standing.get('Constructors', [{}])[0]
+        team_name = constructor.get('name', 'Unknown')
+        
+        # Display format: "Max Verstappen (Red Bull)"
+        display_name = f"{driver_name} ({team_name})"
+        driver_options[display_name] = {
+            'driver_id': driver_id,
+            'driver_name': driver_name,
+            'team_name': team_name
+        }
+    
+    # Driver selector
+    selected_display = st.selectbox(
+        "Select Driver",
+        options=list(driver_options.keys()),
+        key="driver_analytics_selector",
+        help="Select a driver to view detailed performance analytics"
+    )
+    
+    if not selected_display or selected_display not in driver_options:
+        return
+    
+    selected_driver = driver_options[selected_display]
+    driver_id = selected_driver['driver_id']
+    driver_name = selected_driver['driver_name']
+    team_name = selected_driver['team_name']
+    
+    # Metric toggle for performance trends
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown(f"### {driver_name} - {year} Season")
+    with col2:
+        metric_type = st.selectbox(
+            "Trend Metric",
+            options=["Position", "Points"],
+            key="driver_analytics_metric",
+            help="Select metric to display in performance trends"
+        )
+    
+    # Fetch driver race results
+    with st.spinner(f"Loading race data for {driver_name}..."):
+        try:
+            race_results = fetch_driver_race_results(driver_id, year)
+        except Exception as e:
+            st.error(f"❌ Error fetching race data: {str(e)}. The API may be temporarily unavailable. Please try again later.")
+            return
+    
+    if not race_results:
+        st.warning(f"⚠️ No race data available for {driver_name} in {year}. This driver may not have competed in this season, or the data is not yet available.")
+        return
+    
+    # Check if we have sufficient data for any meaningful analysis
+    if len(race_results) < 3:
+        st.warning(f"⚠️ Limited data available: Only {len(race_results)} races found for {driver_name} in {year}. Most analytics require at least 5 races for meaningful results.")
+        # Continue anyway to show what we can
+    
+    # Calculate all analytics (pass race_results directly - they're already in the right format)
+    metric_param = "position" if metric_type == "Position" else "points"
+    
+    try:
+        with st.spinner("Calculating analytics..."):
+            # Performance trends
+            trends = calculate_analytics_performance_trends(race_results, metric=metric_param)
+            
+            # Consistency metrics
+            consistency = calculate_analytics_consistency_score(race_results)
+            
+            # Qualifying vs race correlation
+            correlation = calculate_analytics_qualifying_race_correlation(race_results)
+            
+            # DNF rate
+            dnf_data = calculate_analytics_dnf_rate(race_results)
+            
+            # Points per race
+            points_data = calculate_analytics_points_per_race(race_results, exclude_dnf=False)
+            points_data_no_dnf = calculate_analytics_points_per_race(race_results, exclude_dnf=True)
+            
+            # Form indicator
+            form = calculate_analytics_form_indicator(race_results, n_races=5)
+    except Exception as e:
+        st.error(f"❌ Error calculating analytics: {str(e)}. Please try refreshing the page or selecting a different driver.")
+        return
+    
+    # Display performance trends chart
+    st.markdown("#### Performance Trends")
+    if trends is not None and not trends.empty:
+        trend_chart = create_analytics_trend_chart(
+            trends,
+            metric_name=metric_type,
+            driver_name=driver_name,
+            team_color=None  # Could add team color mapping here
+        )
+        st.plotly_chart(trend_chart, use_container_width=True)
+    else:
+        if not race_results:
+            st.warning("⚠️ No race data available for performance trends.")
+        else:
+            st.info(f"ℹ️ Insufficient data for performance trends. Found {len(race_results)} races.")
+    
+    # Display consistency metrics
+    st.markdown("#### Consistency Metrics")
+    if consistency:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Consistency Score",
+                f"{consistency['consistency_score']:.1f}/100",
+                help="Higher score indicates more consistent performance (0-100 scale)"
+            )
+        with col2:
+            st.metric(
+                "Avg Position",
+                f"{consistency['avg_position']:.1f}",
+                help="Average finishing position in completed races"
+            )
+        with col3:
+            st.metric(
+                "Completed Races",
+                f"{consistency['completed_races']}/{consistency['total_races']}",
+                help="Number of races finished vs total races"
+            )
+    else:
+        # More specific error message based on available data
+        total_races = len(race_results) if race_results else 0
+        if total_races == 0:
+            st.warning("⚠️ No race data available for consistency analysis.")
+        elif total_races < 5:
+            st.warning(f"⚠️ Insufficient data for consistency metrics: Only {total_races} races found (minimum 5 completed races required).")
+        else:
+            st.warning("⚠️ Insufficient completed races for consistency metrics (minimum 5 required). Driver may have too many DNFs.")
+    
+    # Display qualifying vs race correlation
+    st.markdown("#### Qualifying vs Race Performance")
+    if correlation and not correlation.get('insufficient_data', False):
+        # Show info message if there's missing data
+        if correlation.get('missing_data_count', 0) > 0:
+            st.info(f"ℹ️ Note: {correlation['missing_data_count']} races excluded due to missing qualifying or race data.")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            # Create scatter plot
+            scatter_chart = create_analytics_scatter_chart(
+                correlation['scatter_data'],
+                x_label="Grid Position",
+                y_label="Finish Position",
+                title=f"{driver_name} - Qualifying vs Race",
+                correlation=correlation['correlation_coefficient']
+            )
+            st.plotly_chart(scatter_chart, use_container_width=True)
+        
+        with col2:
+            if correlation['correlation_coefficient'] is not None:
+                st.metric(
+                    "Correlation",
+                    f"{correlation['correlation_coefficient']:.3f}",
+                    help="Correlation between grid and finish position (-1 to 1)"
+                )
+            else:
+                st.metric(
+                    "Correlation",
+                    "N/A",
+                    help="Insufficient variance in data for correlation calculation"
+                )
+            st.metric(
+                "Avg Position Change",
+                f"{correlation['avg_position_change']:+.1f}",
+                help="Average positions gained (+) or lost (-) from grid to finish"
+            )
+            st.info(f"**Classification:** {correlation['classification']}")
+    elif correlation and correlation.get('insufficient_data', False):
+        missing_count = correlation.get('missing_data_count', 0)
+        races_found = correlation.get('races_analyzed', 0)
+        
+        if missing_count > 0:
+            st.warning(f"⚠️ Insufficient data for correlation analysis: Only {races_found} races with complete qualifying and race data found (minimum 5 required). {missing_count} races had missing data.")
+        else:
+            st.warning(f"⚠️ Insufficient data for correlation analysis: Only {races_found} completed races found (minimum 5 required).")
+    else:
+        st.info("Insufficient data for correlation analysis.")
+    
+    # Display DNF rate analysis
+    st.markdown("#### DNF Rate Analysis")
+    if dnf_data:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "DNF Rate",
+                f"{dnf_data['dnf_percentage']:.1f}%",
+                help="Percentage of races ending in DNF"
+            )
+        with col2:
+            st.metric(
+                "DNF Count",
+                f"{dnf_data['dnf_count']}/{dnf_data['total_races']}",
+                help="Number of DNFs vs total races"
+            )
+        with col3:
+            # Show most common DNF cause if available
+            if dnf_data['dnf_causes']:
+                most_common = max(dnf_data['dnf_causes'].items(), key=lambda x: x[1])
+                st.metric(
+                    "Most Common Cause",
+                    most_common[0],
+                    delta=f"{most_common[1]} times",
+                    help="Most frequent DNF cause"
+                )
+        
+        # Display DNF cause breakdown if available
+        if dnf_data['dnf_causes']:
+            st.markdown("**DNF Cause Breakdown:**")
+            cause_df = pd.DataFrame([
+                {"Cause": cause, "Count": count}
+                for cause, count in dnf_data['dnf_causes'].items()
+            ])
+            st.dataframe(cause_df, hide_index=True, use_container_width=True)
+    
+    # Display points per race comparison
+    st.markdown("#### Points Per Race")
+    if points_data and points_data_no_dnf:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Points Per Race (All)",
+                f"{points_data['points_per_race']:.2f}",
+                help="Total points divided by all races"
+            )
+        with col2:
+            st.metric(
+                "Points Per Race (Finished)",
+                f"{points_data_no_dnf['points_per_race']:.2f}",
+                help="Total points divided by completed races only"
+            )
+        with col3:
+            st.metric(
+                "Total Points",
+                f"{points_data['total_points']:.0f}",
+                help="Total championship points scored"
+            )
+    
+    # Display form indicator
+    st.markdown("#### Recent Form (Last 5 Races)")
+    if form:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Avg Position",
+                f"{form['avg_position']:.1f}",
+                help=f"Average finishing position in last {form['races_analyzed']} races"
+            )
+        with col2:
+            st.metric(
+                "Total Points",
+                f"{form['total_points']:.0f}",
+                help=f"Points scored in last {form['races_analyzed']} races"
+            )
+        with col3:
+            # Display trend with arrow
+            trend_dir = form['trend_direction']
+            if trend_dir == 'improving':
+                trend_emoji = "📈"
+                trend_color = "green"
+            elif trend_dir == 'declining':
+                trend_emoji = "📉"
+                trend_color = "red"
+            else:
+                trend_emoji = "➡️"
+                trend_color = "gray"
+            
+            st.metric(
+                "Trend",
+                f"{trend_emoji} {trend_dir.capitalize()}",
+                delta=f"Slope: {form['trend_slope']:.2f}",
+                help="Performance trend based on linear regression"
+            )
+        
+        if form['races_analyzed'] < 5:
+            st.info(f"ℹ️ Form indicator based on {form['races_analyzed']} races (fewer than 5 available in season).")
+    else:
+        total_races = len(race_results) if race_results else 0
+        if total_races == 0:
+            st.warning("⚠️ No race data available for form indicator.")
+        else:
+            st.info(f"ℹ️ Insufficient data for form indicator. Found {total_races} races (at least 1 race required).")
+
+
+def render_analytics_team_subsection(year: str = "current"):
+    """
+    Team analytics subsection with placeholder content.
+    
+    Args:
+        year: Season year to analyze
+    """
+    st.subheader("Team Analytics")
+    st.info("🚧 Team reliability metrics, development trends, and driver pairing analysis coming soon!")
+    
+    # Team selector placeholder
+    st.selectbox(
+        "Select Constructor",
+        options=["Coming soon..."],
+        key="team_analytics_selector",
+        help="Select a constructor to view team performance analytics"
+    )
+
+
+def render_analytics_circuit_subsection(year: str = "current"):
+    """
+    Circuit analytics subsection with placeholder content.
+    
+    Args:
+        year: Season year to analyze
+    """
+    st.subheader("Circuit Analytics")
+    st.info("🚧 Circuit difficulty ratings and track-specific performance analysis coming soon!")
+    
+    # Circuit selector placeholder
+    st.selectbox(
+        "Select Circuit",
+        options=["Coming soon..."],
+        key="circuit_analytics_selector",
+        help="Select a circuit to view track-specific analytics"
+    )
+
+
+def render_analytics_comparative_subsection(year: str = "current"):
+    """
+    Comparative analytics subsection with placeholder content.
+    
+    Args:
+        year: Season year to analyze
+    """
+    st.subheader("Comparative Analytics")
+    st.info("🚧 Multi-driver comparisons, season-over-season analysis, and percentile rankings coming soon!")
+    
+    # Multi-select placeholder
+    st.multiselect(
+        "Select Drivers to Compare (3-10)",
+        options=["Coming soon..."],
+        key="comparative_analytics_selector",
+        help="Select multiple drivers for comparative analysis"
+    )
+
+
+def render_analytics_statistical_subsection(year: str = "current"):
+    """
+    Statistical insights subsection with placeholder content.
+    
+    Args:
+        year: Season year to analyze
+    """
+    st.subheader("Statistical Insights")
+    st.info("🚧 Qualifying-race correlations, win probabilities, and championship projections coming soon!")
+    
+    # Season range selector placeholder
+    col1, col2 = st.columns(2)
+    with col1:
+        st.selectbox(
+            "Start Season",
+            options=["Coming soon..."],
+            key="stats_start_season",
+            help="Select starting season for statistical analysis"
+        )
+    with col2:
+        st.selectbox(
+            "End Season",
+            options=["Coming soon..."],
+            key="stats_end_season",
+            help="Select ending season for statistical analysis"
+        )
+
+
+# ============================================================================
 # MAIN APPLICATION
 # ============================================================================
 
@@ -1900,12 +3087,13 @@ def main():
     st.markdown("Real-time F1 race data, standings, and statistics")
     
     # Tab-based navigation
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊 Overview", 
         "🏎️ Driver Standings", 
         "🏁 Constructor Standings", 
         "📅 Race Calendar",
-        "🏁 All Races"
+        "🏁 All Races",
+        "📊 Advanced Analytics"
     ])
     
     with tab1:
@@ -1922,6 +3110,9 @@ def main():
     
     with tab5:
         render_all_races_page(selected_year)
+    
+    with tab6:
+        render_analytics_main_page(selected_year)
     
     # Footer with last updated time
     st.divider()
