@@ -1313,6 +1313,800 @@ def calculate_analytics_form_indicator(
     }
 
 
+@st.cache_data(ttl=3600)
+def calculate_analytics_team_reliability(
+    constructor_results: list,
+    season: str
+) -> Dict[str, Any]:
+    """
+    Calculate team reliability metrics.
+    
+    Args:
+        constructor_results: List of constructor race results from API
+        season: Season year for context
+    
+    Returns:
+        Dict with keys: both_finished_pct, avg_finish_position,
+        mechanical_dnf_rate, total_races
+    """
+    if not constructor_results:
+        return {
+            'both_finished_pct': 0.0,
+            'avg_finish_position': 0.0,
+            'mechanical_dnf_rate': 0.0,
+            'total_races': 0
+        }
+    
+    total_races = len(constructor_results)
+    both_finished_count = 0
+    total_positions = []
+    mechanical_dnf_count = 0
+    total_driver_entries = 0
+    
+    for race in constructor_results:
+        results = race.get('Results', [])
+        
+        if not results:
+            continue
+        
+        # Track finishes and positions for both drivers
+        finished_count = 0
+        race_positions = []
+        
+        for result in results:
+            status = result.get('status', 'Finished')
+            position = result.get('position', None)
+            
+            total_driver_entries += 1
+            
+            # Check if driver finished
+            if not is_dnf(status):
+                finished_count += 1
+                # Add position to average calculation
+                position_int = safe_int(position, default=None)
+                if position_int is not None and position_int > 0:
+                    race_positions.append(position_int)
+            else:
+                # Check if it's a mechanical DNF
+                if status in ['Engine', 'Gearbox', 'Transmission', 'Clutch', 
+                             'Hydraulics', 'Electrical', 'Mechanical', 'Brakes',
+                             'Suspension', 'Fuel pressure', 'Overheating']:
+                    mechanical_dnf_count += 1
+        
+        # Check if both drivers finished (assuming 2 drivers per team)
+        if finished_count >= 2:
+            both_finished_count += 1
+        
+        # Add all positions from this race
+        total_positions.extend(race_positions)
+    
+    # Calculate metrics
+    both_finished_pct = safe_divide(both_finished_count * 100, total_races, default=0.0)
+    avg_finish_position = safe_divide(sum(total_positions), len(total_positions), default=0.0) if total_positions else 0.0
+    mechanical_dnf_rate = safe_divide(mechanical_dnf_count * 100, total_driver_entries, default=0.0)
+    
+    return {
+        'both_finished_pct': round(both_finished_pct, 1),
+        'avg_finish_position': round(avg_finish_position, 2),
+        'mechanical_dnf_rate': round(mechanical_dnf_rate, 1),
+        'total_races': total_races
+    }
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_constructor_development(
+    constructor_results: list,
+    window_size: int = 3
+) -> pd.DataFrame:
+    """
+    Calculate rolling development trends for a constructor.
+    
+    Args:
+        constructor_results: List of constructor race results from API
+        window_size: Rolling window size for averages
+    
+    Returns:
+        DataFrame with columns: race_name, round, rolling_avg_points,
+        rolling_avg_position, trend_classification
+    """
+    if not constructor_results:
+        return pd.DataFrame(columns=['race_name', 'round', 'rolling_avg_points', 
+                                    'rolling_avg_position', 'trend_classification'])
+    
+    # Extract race-by-race data
+    race_data = []
+    
+    for race in constructor_results:
+        race_name = race.get('raceName', 'Unknown')
+        race_round = safe_int(race.get('round', 0))
+        results = race.get('Results', [])
+        
+        # Calculate total points and average position for this race
+        race_points = 0.0
+        race_positions = []
+        
+        for result in results:
+            points = safe_float(result.get('points', '0'), default=0.0)
+            position = result.get('position', None)
+            status = result.get('status', 'Finished')
+            
+            race_points += points
+            
+            # Only include finished positions in average
+            if not is_dnf(status) and position:
+                position_int = safe_int(position, default=None)
+                if position_int is not None and position_int > 0:
+                    race_positions.append(position_int)
+        
+        avg_position = safe_divide(sum(race_positions), len(race_positions), default=0.0) if race_positions else 0.0
+        
+        race_data.append({
+            'race_name': race_name,
+            'round': race_round,
+            'points': race_points,
+            'avg_position': avg_position
+        })
+    
+    # Create DataFrame
+    df = pd.DataFrame(race_data)
+    
+    if df.empty:
+        return df
+    
+    # Calculate rolling averages
+    df['rolling_avg_points'] = df['points'].rolling(window=window_size, min_periods=1).mean()
+    df['rolling_avg_position'] = df['avg_position'].rolling(window=window_size, min_periods=1).mean()
+    
+    # Calculate overall trend classification using linear regression on rolling averages
+    if len(df) >= window_size:
+        # Use the rolling average points for trend analysis
+        x = list(range(len(df)))
+        y = df['rolling_avg_points'].values
+        
+        # Calculate slope
+        slope, _ = np.polyfit(x, y, 1)
+        
+        # Classify trend (for points, positive slope = improving)
+        if abs(slope) < 0.5:
+            trend_classification = "stable"
+        elif slope > 0:
+            trend_classification = "improving"
+        else:
+            trend_classification = "declining"
+    else:
+        trend_classification = "insufficient data"
+    
+    # Add trend classification to all rows
+    df['trend_classification'] = trend_classification
+    
+    return df
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_driver_pairing(
+    driver1_results: list,
+    driver2_results: list,
+    driver1_name: str,
+    driver2_name: str
+) -> Dict[str, Any]:
+    """
+    Calculate driver pairing effectiveness metrics.
+    
+    Args:
+        driver1_results: Race results for first driver
+        driver2_results: Race results for second driver
+        driver1_name: Name of first driver
+        driver2_name: Name of second driver
+    
+    Returns:
+        Dict with keys: points_ratio, quali_gap, race_gap, balance_flag,
+        driver1_points, driver2_points
+    """
+    # Calculate total points for each driver
+    driver1_points = 0.0
+    driver2_points = 0.0
+    
+    for race in driver1_results:
+        results = race.get('Results', [])
+        if results:
+            points = safe_float(results[0].get('points', '0'), default=0.0)
+            driver1_points += points
+    
+    for race in driver2_results:
+        results = race.get('Results', [])
+        if results:
+            points = safe_float(results[0].get('points', '0'), default=0.0)
+            driver2_points += points
+    
+    # Calculate points ratio
+    total_points = driver1_points + driver2_points
+    if total_points > 0:
+        driver1_pct = (driver1_points / total_points) * 100
+        driver2_pct = (driver2_points / total_points) * 100
+        points_ratio = f"{driver1_pct:.1f}:{driver2_pct:.1f}"
+        
+        # Check if pairing is imbalanced (>70:30 ratio)
+        if driver1_pct > 70 or driver2_pct > 70:
+            balance_flag = "imbalanced"
+        else:
+            balance_flag = "balanced"
+    else:
+        points_ratio = "0.0:0.0"
+        balance_flag = "no data"
+    
+    # Calculate average qualifying gap
+    quali_gaps = []
+    for race1, race2 in zip(driver1_results, driver2_results):
+        results1 = race1.get('Results', [])
+        results2 = race2.get('Results', [])
+        
+        if results1 and results2:
+            grid1 = safe_int(results1[0].get('grid', None), default=None)
+            grid2 = safe_int(results2[0].get('grid', None), default=None)
+            
+            if grid1 is not None and grid2 is not None:
+                quali_gaps.append(abs(grid1 - grid2))
+    
+    avg_quali_gap = safe_divide(sum(quali_gaps), len(quali_gaps), default=0.0) if quali_gaps else 0.0
+    
+    # Calculate average race finishing gap
+    race_gaps = []
+    for race1, race2 in zip(driver1_results, driver2_results):
+        results1 = race1.get('Results', [])
+        results2 = race2.get('Results', [])
+        
+        if results1 and results2:
+            status1 = results1[0].get('status', 'Finished')
+            status2 = results2[0].get('status', 'Finished')
+            
+            # Only compare if both finished
+            if not is_dnf(status1) and not is_dnf(status2):
+                pos1 = safe_int(results1[0].get('position', None), default=None)
+                pos2 = safe_int(results2[0].get('position', None), default=None)
+                
+                if pos1 is not None and pos2 is not None:
+                    race_gaps.append(abs(pos1 - pos2))
+    
+    avg_race_gap = safe_divide(sum(race_gaps), len(race_gaps), default=0.0) if race_gaps else 0.0
+    
+    return {
+        'points_ratio': points_ratio,
+        'quali_gap': round(avg_quali_gap, 2),
+        'race_gap': round(avg_race_gap, 2),
+        'balance_flag': balance_flag,
+        'driver1_points': round(driver1_points, 1),
+        'driver2_points': round(driver2_points, 1),
+        'driver1_name': driver1_name,
+        'driver2_name': driver2_name
+    }
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_circuit_performance(
+    driver_results: list,
+    circuit_name: str,
+    min_appearances: int = 3
+) -> Dict[str, Any]:
+    """
+    Calculate driver performance at a specific circuit.
+    
+    Args:
+        driver_results: All race results for driver (filtered to circuit)
+        circuit_name: Name of the circuit
+        min_appearances: Minimum races for reliable statistics
+    
+    Returns:
+        Dict with keys: avg_finish, win_rate, podium_rate, points_rate,
+        appearances, low_sample_warning
+    """
+    if not driver_results:
+        return {
+            'avg_finish': None,
+            'win_rate': 0.0,
+            'podium_rate': 0.0,
+            'points_rate': 0.0,
+            'appearances': 0,
+            'low_sample_warning': True,
+            'circuit_name': circuit_name
+        }
+    
+    # Extract race results
+    positions = []
+    wins = 0
+    podiums = 0
+    points_finishes = 0
+    total_races = len(driver_results)
+    
+    for race in driver_results:
+        results = race.get('Results', [])
+        if results:
+            result = results[0]
+            status = result.get('status', 'Finished')
+            
+            # Only count finished races for average position
+            if not is_dnf(status):
+                position = safe_int(result.get('position', None), default=None)
+                if position is not None:
+                    positions.append(position)
+                    
+                    # Count wins (position 1)
+                    if position == 1:
+                        wins += 1
+                    
+                    # Count podiums (positions 1-3)
+                    if position <= 3:
+                        podiums += 1
+                    
+                    # Count points finishes (positions 1-10 in modern F1)
+                    if position <= 10:
+                        points_finishes += 1
+    
+    # Calculate metrics
+    avg_finish = safe_divide(sum(positions), len(positions), default=None) if positions else None
+    win_rate = safe_divide(wins, total_races, default=0.0) * 100
+    podium_rate = safe_divide(podiums, total_races, default=0.0) * 100
+    points_rate = safe_divide(points_finishes, total_races, default=0.0) * 100
+    
+    # Check if sample size is too small
+    low_sample_warning = total_races < min_appearances
+    
+    return {
+        'avg_finish': round(avg_finish, 2) if avg_finish is not None else None,
+        'win_rate': round(win_rate, 1),
+        'podium_rate': round(podium_rate, 1),
+        'points_rate': round(points_rate, 1),
+        'appearances': total_races,
+        'low_sample_warning': low_sample_warning,
+        'circuit_name': circuit_name
+    }
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_circuit_difficulty(
+    all_races_data: list,
+    seasons: list
+) -> pd.DataFrame:
+    """
+    Calculate difficulty ratings for all circuits.
+    
+    Args:
+        all_races_data: Race results across multiple seasons
+        seasons: List of season years included
+    
+    Returns:
+        DataFrame with columns: circuit_name, dnf_rate, avg_position_change,
+        difficulty_score (0-100), races_analyzed
+    """
+    if not all_races_data:
+        return pd.DataFrame(columns=[
+            'circuit_name', 'dnf_rate', 'avg_position_change',
+            'difficulty_score', 'races_analyzed'
+        ])
+    
+    # Group races by circuit
+    circuit_data = {}
+    
+    for race in all_races_data:
+        circuit_name = race.get('Circuit', {}).get('circuitName', 'Unknown')
+        
+        if circuit_name not in circuit_data:
+            circuit_data[circuit_name] = {
+                'total_entries': 0,
+                'dnf_count': 0,
+                'position_changes': [],
+                'race_count': 0
+            }
+        
+        circuit_data[circuit_name]['race_count'] += 1
+        
+        # Analyze results for this race
+        results = race.get('Results', [])
+        for result in results:
+            circuit_data[circuit_name]['total_entries'] += 1
+            
+            status = result.get('status', 'Finished')
+            if is_dnf(status):
+                circuit_data[circuit_name]['dnf_count'] += 1
+            
+            # Calculate position change (grid to finish)
+            grid = safe_int(result.get('grid', None), default=None)
+            position = safe_int(result.get('position', None), default=None)
+            
+            if grid is not None and position is not None and not is_dnf(status):
+                position_change = grid - position  # Positive = gained positions
+                circuit_data[circuit_name]['position_changes'].append(abs(position_change))
+    
+    # Calculate metrics for each circuit
+    circuit_metrics = []
+    
+    for circuit_name, data in circuit_data.items():
+        # DNF rate
+        dnf_rate = safe_divide(data['dnf_count'], data['total_entries'], default=0.0) * 100
+        
+        # Average position change (absolute value)
+        avg_position_change = safe_divide(
+            sum(data['position_changes']),
+            len(data['position_changes']),
+            default=0.0
+        ) if data['position_changes'] else 0.0
+        
+        # Calculate difficulty score (0-100)
+        # Formula: (dnf_rate * 0.6) + (abs(avg_pos_change) * 4.0)
+        # Higher DNF rate and more position changes = higher difficulty
+        raw_score = (dnf_rate * 0.6) + (avg_position_change * 4.0)
+        difficulty_score = min(100, max(0, raw_score))
+        
+        circuit_metrics.append({
+            'circuit_name': circuit_name,
+            'dnf_rate': round(dnf_rate, 1),
+            'avg_position_change': round(avg_position_change, 2),
+            'difficulty_score': round(difficulty_score, 1),
+            'races_analyzed': data['race_count']
+        })
+    
+    # Create DataFrame and sort by difficulty score (descending)
+    df = pd.DataFrame(circuit_metrics)
+    df = df.sort_values('difficulty_score', ascending=False).reset_index(drop=True)
+    
+    return df
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_multi_driver_comparison(
+    drivers_data: Dict[str, list],
+    metrics: list = None
+) -> pd.DataFrame:
+    """
+    Compare multiple drivers across standardized metrics.
+    
+    Args:
+        drivers_data: Dict mapping driver_name to race_results list
+        metrics: List of metrics to compare (default: all)
+    
+    Returns:
+        DataFrame with columns: driver_name, avg_finish, points_per_race,
+        consistency_score, dnf_rate, [other metrics]
+    """
+    if not drivers_data:
+        return pd.DataFrame()
+    
+    # Default metrics to calculate
+    if metrics is None:
+        metrics = ['avg_finish', 'points_per_race', 'consistency_score', 'dnf_rate']
+    
+    comparison_data = []
+    
+    for driver_name, race_results in drivers_data.items():
+        if not race_results:
+            continue
+        
+        driver_metrics = {'driver_name': driver_name}
+        
+        # Calculate average finish position (excluding DNFs)
+        if 'avg_finish' in metrics:
+            finished_races = []
+            for race in race_results:
+                results = race.get('Results', [])
+                if results:
+                    result = results[0]
+                    status = result.get('status', 'Finished')
+                    position = result.get('position', 'R')
+                    
+                    if not is_dnf(status):
+                        pos_int = safe_int(position, default=None)
+                        if pos_int is not None:
+                            finished_races.append(pos_int)
+            
+            if finished_races:
+                driver_metrics['avg_finish'] = round(sum(finished_races) / len(finished_races), 2)
+            else:
+                driver_metrics['avg_finish'] = None
+        
+        # Calculate points per race
+        if 'points_per_race' in metrics:
+            total_points = 0
+            for race in race_results:
+                results = race.get('Results', [])
+                if results:
+                    result = results[0]
+                    total_points += safe_float(result.get('points', 0))
+            
+            races_count = len(race_results)
+            driver_metrics['points_per_race'] = round(
+                safe_divide(total_points, races_count, default=0.0), 2
+            )
+        
+        # Calculate consistency score
+        if 'consistency_score' in metrics:
+            consistency = calculate_analytics_consistency_score(race_results, min_races=5)
+            if consistency:
+                driver_metrics['consistency_score'] = consistency['consistency_score']
+            else:
+                driver_metrics['consistency_score'] = None
+        
+        # Calculate DNF rate
+        if 'dnf_rate' in metrics:
+            dnf_data = calculate_analytics_dnf_rate(race_results)
+            driver_metrics['dnf_rate'] = dnf_data['dnf_percentage']
+        
+        comparison_data.append(driver_metrics)
+    
+    return pd.DataFrame(comparison_data)
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_season_comparison(
+    entity_results_by_season: Dict[str, list],
+    entity_type: str = "driver"
+) -> pd.DataFrame:
+    """
+    Compare performance across multiple seasons.
+    
+    Args:
+        entity_results_by_season: Dict mapping season to race_results list
+        entity_type: Type of entity being compared ("driver" or "constructor")
+    
+    Returns:
+        DataFrame with columns: season, avg_finish, total_points,
+        points_per_race, consistency_score, yoy_change_pct
+    """
+    if not entity_results_by_season:
+        return pd.DataFrame()
+    
+    season_data = []
+    
+    # Sort seasons chronologically
+    sorted_seasons = sorted(entity_results_by_season.keys())
+    
+    for season in sorted_seasons:
+        race_results = entity_results_by_season[season]
+        
+        if not race_results:
+            continue
+        
+        season_metrics = {'season': season}
+        
+        # Calculate average finish position (excluding DNFs)
+        finished_races = []
+        for race in race_results:
+            results = race.get('Results', [])
+            if results:
+                result = results[0]
+                status = result.get('status', 'Finished')
+                position = result.get('position', 'R')
+                
+                if not is_dnf(status):
+                    pos_int = safe_int(position, default=None)
+                    if pos_int is not None:
+                        finished_races.append(pos_int)
+        
+        if finished_races:
+            season_metrics['avg_finish'] = round(sum(finished_races) / len(finished_races), 2)
+        else:
+            season_metrics['avg_finish'] = None
+        
+        # Calculate total points
+        total_points = 0
+        for race in race_results:
+            results = race.get('Results', [])
+            if results:
+                result = results[0]
+                total_points += safe_float(result.get('points', 0))
+        
+        season_metrics['total_points'] = round(total_points, 1)
+        
+        # Calculate points per race
+        races_count = len(race_results)
+        season_metrics['points_per_race'] = round(
+            safe_divide(total_points, races_count, default=0.0), 2
+        )
+        
+        # Calculate consistency score
+        consistency = calculate_analytics_consistency_score(race_results, min_races=5)
+        if consistency:
+            season_metrics['consistency_score'] = consistency['consistency_score']
+        else:
+            season_metrics['consistency_score'] = None
+        
+        season_data.append(season_metrics)
+    
+    # Create DataFrame
+    df = pd.DataFrame(season_data)
+    
+    # Calculate year-over-year percentage change for points per race
+    if len(df) > 1:
+        yoy_changes = [None]  # First season has no previous year
+        
+        for i in range(1, len(df)):
+            prev_ppr = df.iloc[i-1]['points_per_race']
+            curr_ppr = df.iloc[i]['points_per_race']
+            
+            if prev_ppr > 0:
+                yoy_change = ((curr_ppr - prev_ppr) / prev_ppr) * 100
+                yoy_changes.append(round(yoy_change, 1))
+            else:
+                yoy_changes.append(None)
+        
+        df['yoy_change_pct'] = yoy_changes
+    else:
+        df['yoy_change_pct'] = None
+    
+    # Normalize points for different scoring systems
+    # F1 scoring systems changed in 2010 (25 points for win)
+    # Before 2010: 10 points for win
+    # We'll normalize to the modern system (25 points for win)
+    df['normalized_points_per_race'] = df.apply(
+        lambda row: _normalize_points_for_season(
+            row['points_per_race'],
+            row['season']
+        ),
+        axis=1
+    )
+    
+    return df
+
+
+def _normalize_points_for_season(points_per_race: float, season: str) -> float:
+    """
+    Normalize points to modern scoring system (25 points for win).
+    
+    Args:
+        points_per_race: Points per race in the original scoring system
+        season: Season year
+    
+    Returns:
+        Normalized points per race
+    """
+    try:
+        season_year = int(season)
+        
+        # Pre-2010: 10 points for win, multiply by 2.5 to normalize
+        if season_year < 2010:
+            return round(points_per_race * 2.5, 2)
+        
+        # 2010 onwards: 25 points for win (modern system)
+        return points_per_race
+    except (ValueError, TypeError):
+        return points_per_race
+
+
+@st.cache_data(ttl=3600)
+def calculate_analytics_percentile_rankings(
+    driver_results: list,
+    all_drivers_results: Dict[str, list],
+    season: str
+) -> Dict[str, float]:
+    """
+    Calculate percentile rankings for a driver within the field.
+    
+    Args:
+        driver_results: Race results for target driver
+        all_drivers_results: Dict mapping all driver names to their results
+        season: Season year for context
+    
+    Returns:
+        Dict with keys: avg_finish_percentile, points_percentile,
+        consistency_percentile, field_size
+    """
+    if not driver_results or not all_drivers_results:
+        return {
+            'avg_finish_percentile': 0.0,
+            'points_percentile': 0.0,
+            'consistency_percentile': 0.0,
+            'field_size': 0
+        }
+    
+    # Filter drivers who competed in at least 50% of season races
+    total_races = len(driver_results)
+    min_races = max(1, total_races // 2)
+    
+    qualified_drivers = {
+        name: results
+        for name, results in all_drivers_results.items()
+        if len(results) >= min_races
+    }
+    
+    field_size = len(qualified_drivers)
+    
+    if field_size == 0:
+        return {
+            'avg_finish_percentile': 0.0,
+            'points_percentile': 0.0,
+            'consistency_percentile': 0.0,
+            'field_size': 0
+        }
+    
+    # Calculate metrics for all qualified drivers
+    driver_metrics = {}
+    
+    for name, results in qualified_drivers.items():
+        # Average finish position (excluding DNFs)
+        finished_races = []
+        for race in results:
+            race_results = race.get('Results', [])
+            if race_results:
+                result = race_results[0]
+                status = result.get('status', 'Finished')
+                position = result.get('position', 'R')
+                
+                if not is_dnf(status):
+                    pos_int = safe_int(position, default=None)
+                    if pos_int is not None:
+                        finished_races.append(pos_int)
+        
+        avg_finish = safe_divide(
+            sum(finished_races),
+            len(finished_races),
+            default=999.0
+        ) if finished_races else 999.0
+        
+        # Total points
+        total_points = 0
+        for race in results:
+            race_results = race.get('Results', [])
+            if race_results:
+                result = race_results[0]
+                total_points += safe_float(result.get('points', 0))
+        
+        # Consistency score
+        consistency = calculate_analytics_consistency_score(results, min_races=5)
+        consistency_score = consistency['consistency_score'] if consistency else 0.0
+        
+        driver_metrics[name] = {
+            'avg_finish': avg_finish,
+            'total_points': total_points,
+            'consistency_score': consistency_score
+        }
+    
+    # Find target driver's name
+    target_driver_name = None
+    for name in qualified_drivers.keys():
+        if qualified_drivers[name] == driver_results:
+            target_driver_name = name
+            break
+    
+    # If we can't find the target driver by reference, use the first driver
+    # with matching result count (fallback)
+    if target_driver_name is None:
+        for name, results in qualified_drivers.items():
+            if len(results) == len(driver_results):
+                target_driver_name = name
+                break
+    
+    if target_driver_name is None or target_driver_name not in driver_metrics:
+        return {
+            'avg_finish_percentile': 0.0,
+            'points_percentile': 0.0,
+            'consistency_percentile': 0.0,
+            'field_size': field_size
+        }
+    
+    target_metrics = driver_metrics[target_driver_name]
+    
+    # Calculate percentiles
+    # For avg_finish: lower is better, so we count how many drivers have worse (higher) avg
+    avg_finish_values = [m['avg_finish'] for m in driver_metrics.values()]
+    drivers_worse_finish = sum(1 for v in avg_finish_values if v > target_metrics['avg_finish'])
+    avg_finish_percentile = (drivers_worse_finish / field_size) * 100
+    
+    # For points: higher is better, so we count how many drivers have fewer points
+    points_values = [m['total_points'] for m in driver_metrics.values()]
+    drivers_fewer_points = sum(1 for v in points_values if v < target_metrics['total_points'])
+    points_percentile = (drivers_fewer_points / field_size) * 100
+    
+    # For consistency: higher is better, so we count how many drivers have lower consistency
+    consistency_values = [m['consistency_score'] for m in driver_metrics.values()]
+    drivers_less_consistent = sum(1 for v in consistency_values if v < target_metrics['consistency_score'])
+    consistency_percentile = (drivers_less_consistent / field_size) * 100
+    
+    return {
+        'avg_finish_percentile': round(avg_finish_percentile, 1),
+        'points_percentile': round(points_percentile, 1),
+        'consistency_percentile': round(consistency_percentile, 1),
+        'field_size': field_size
+    }
+
+
 # ============================================================================
 # UI HELPER FUNCTIONS
 # ============================================================================
@@ -1665,6 +2459,364 @@ def create_analytics_scatter_chart(
             font=dict(size=14, color='#E10600'),
             bgcolor='rgba(255,255,255,0.8)',
             bordercolor='#E10600',
+            borderwidth=1,
+            borderpad=4
+        )
+    
+    return fig
+
+
+def create_analytics_radar_chart(
+    comparison_data: pd.DataFrame,
+    metrics: list,
+    entity_names: list
+) -> go.Figure:
+    """
+    Create radar chart for multi-entity comparison.
+    
+    Args:
+        comparison_data: DataFrame with entity names and metric columns
+        metrics: List of metric names to display
+        entity_names: List of entity names (drivers/teams)
+    
+    Returns:
+        Plotly Figure object with radar chart
+    """
+    if comparison_data.empty or not metrics or not entity_names:
+        # Return empty figure with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No data available for comparison",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16)
+        )
+        return fig
+    
+    # Create the radar chart
+    fig = go.Figure()
+    
+    # Define colors for different entities
+    colors = [
+        '#E10600', '#FF6B00', '#00D2BE', '#0090FF', '#DC0000',
+        '#006F62', '#2B4562', '#C92D4B', '#005AFF', '#F58020'
+    ]
+    
+    # Add a trace for each entity
+    for idx, entity_name in enumerate(entity_names):
+        if entity_name not in comparison_data['driver_name'].values and \
+           entity_name not in comparison_data['constructor_name'].values:
+            continue
+        
+        # Get the row for this entity
+        if 'driver_name' in comparison_data.columns:
+            entity_row = comparison_data[comparison_data['driver_name'] == entity_name]
+        else:
+            entity_row = comparison_data[comparison_data['constructor_name'] == entity_name]
+        
+        if entity_row.empty:
+            continue
+        
+        # Extract metric values
+        values = []
+        for metric in metrics:
+            if metric in entity_row.columns:
+                val = entity_row[metric].values[0]
+                values.append(safe_float(val, 0.0))
+            else:
+                values.append(0.0)
+        
+        # Close the radar chart by repeating the first value
+        values_closed = values + [values[0]]
+        metrics_closed = metrics + [metrics[0]]
+        
+        # Add trace
+        color = colors[idx % len(colors)]
+        fig.add_trace(go.Scatterpolar(
+            r=values_closed,
+            theta=metrics_closed,
+            fill='toself',
+            name=entity_name,
+            line=dict(color=color, width=2),
+            marker=dict(size=6, color=color),
+            opacity=0.6,
+            hovertemplate=(
+                f'<b>{entity_name}</b><br>' +
+                '%{theta}: %{r:.2f}<br>' +
+                '<extra></extra>'
+            )
+        ))
+    
+    # Update layout
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 100],
+                gridcolor='rgba(128,128,128,0.2)'
+            ),
+            angularaxis=dict(
+                gridcolor='rgba(128,128,128,0.2)'
+            )
+        ),
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.1
+        ),
+        title="Multi-Entity Performance Comparison",
+        title_font=dict(size=16, color='#E10600'),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(size=12),
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=12,
+            font_family="sans-serif"
+        ),
+        height=600
+    )
+    
+    return fig
+
+
+def create_analytics_grouped_bar_chart(
+    comparison_data: pd.DataFrame,
+    x_col: str,
+    y_cols: list,
+    title: str
+) -> go.Figure:
+    """
+    Create grouped bar chart for metric comparison.
+    
+    Args:
+        comparison_data: DataFrame with comparison data
+        x_col: Column name for x-axis (categories)
+        y_cols: List of column names for grouped bars
+        title: Chart title
+    
+    Returns:
+        Plotly Figure object with grouped bar chart
+    """
+    if comparison_data.empty or not y_cols:
+        # Return empty figure with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No data available for comparison",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16)
+        )
+        return fig
+    
+    # Verify x_col exists
+    if x_col not in comparison_data.columns:
+        fig = go.Figure()
+        fig.add_annotation(
+            text=f"Column '{x_col}' not found in data",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16)
+        )
+        return fig
+    
+    # Create the grouped bar chart
+    fig = go.Figure()
+    
+    # Define colors for different metrics
+    colors = [
+        '#E10600', '#FF6B00', '#00D2BE', '#0090FF', '#DC0000',
+        '#006F62', '#2B4562', '#C92D4B', '#005AFF', '#F58020'
+    ]
+    
+    # Add a bar trace for each metric
+    for idx, y_col in enumerate(y_cols):
+        if y_col not in comparison_data.columns:
+            continue
+        
+        color = colors[idx % len(colors)]
+        
+        fig.add_trace(go.Bar(
+            x=comparison_data[x_col],
+            y=comparison_data[y_col],
+            name=y_col,
+            marker=dict(
+                color=color,
+                line=dict(color='rgba(0,0,0,0.2)', width=1)
+            ),
+            hovertemplate=(
+                f'<b>%{{x}}</b><br>' +
+                f'{y_col}: %{{y:.2f}}<br>' +
+                '<extra></extra>'
+            )
+        ))
+    
+    # Update layout
+    fig.update_layout(
+        title=title,
+        xaxis_title=x_col.replace('_', ' ').title(),
+        yaxis_title="Value",
+        barmode='group',
+        hovermode='x unified',
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(size=12),
+        title_font=dict(size=16, color='#E10600'),
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=12,
+            font_family="sans-serif"
+        ),
+        xaxis=dict(
+            gridcolor='rgba(128,128,128,0.2)',
+            tickangle=-45
+        ),
+        yaxis=dict(
+            gridcolor='rgba(128,128,128,0.2)'
+        ),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        height=500
+    )
+    
+    return fig
+
+
+def create_analytics_horizontal_percentile_chart(
+    percentile_data: Dict[str, float],
+    driver_name: str
+) -> go.Figure:
+    """
+    Create horizontal bar chart showing percentile rankings.
+    
+    Args:
+        percentile_data: Dict mapping metric names to percentile values
+        driver_name: Driver name for title
+    
+    Returns:
+        Plotly Figure object with horizontal bar chart
+    """
+    if not percentile_data:
+        # Return empty figure with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No percentile data available",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16)
+        )
+        return fig
+    
+    # Filter out non-percentile fields (like 'field_size')
+    metrics = []
+    percentiles = []
+    
+    for metric, value in percentile_data.items():
+        if metric != 'field_size' and isinstance(value, (int, float)):
+            # Format metric name for display
+            display_name = metric.replace('_percentile', '').replace('_', ' ').title()
+            metrics.append(display_name)
+            percentiles.append(value)
+    
+    if not metrics:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No valid percentile metrics found",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=16)
+        )
+        return fig
+    
+    # Create color scale based on percentile value (higher is better)
+    colors = []
+    for p in percentiles:
+        if p >= 75:
+            colors.append('#00D400')  # Green for top quartile
+        elif p >= 50:
+            colors.append('#FFD700')  # Gold for above median
+        elif p >= 25:
+            colors.append('#FF8C00')  # Orange for below median
+        else:
+            colors.append('#E10600')  # Red for bottom quartile
+    
+    # Create the horizontal bar chart
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=percentiles,
+        y=metrics,
+        orientation='h',
+        marker=dict(
+            color=colors,
+            line=dict(color='rgba(0,0,0,0.2)', width=1)
+        ),
+        text=[f"{p:.1f}%" for p in percentiles],
+        textposition='outside',
+        hovertemplate=(
+            '<b>%{y}</b><br>' +
+            'Percentile: %{x:.1f}%<br>' +
+            '<extra></extra>'
+        )
+    ))
+    
+    # Add reference lines for quartiles
+    for quartile, label in [(25, '25th'), (50, '50th (Median)'), (75, '75th')]:
+        fig.add_vline(
+            x=quartile,
+            line_dash="dash",
+            line_color="rgba(128,128,128,0.5)",
+            line_width=1,
+            annotation_text=label,
+            annotation_position="top"
+        )
+    
+    # Update layout
+    fig.update_layout(
+        title=f"{driver_name} - Percentile Rankings",
+        xaxis_title="Percentile (%)",
+        yaxis_title="Metric",
+        hovermode='y unified',
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(size=12),
+        title_font=dict(size=16, color='#E10600'),
+        hoverlabel=dict(
+            bgcolor="white",
+            font_size=12,
+            font_family="sans-serif"
+        ),
+        xaxis=dict(
+            range=[0, 105],  # Extend slightly beyond 100 for text labels
+            gridcolor='rgba(128,128,128,0.2)',
+            ticksuffix='%'
+        ),
+        yaxis=dict(
+            gridcolor='rgba(128,128,128,0.2)'
+        ),
+        showlegend=False,
+        height=400
+    )
+    
+    # Add field size annotation if available
+    if 'field_size' in percentile_data:
+        fig.add_annotation(
+            text=f"Field Size: {percentile_data['field_size']} drivers",
+            xref="paper", yref="paper",
+            x=0.02, y=0.98,
+            showarrow=False,
+            font=dict(size=12, color='#666666'),
+            bgcolor='rgba(255,255,255,0.8)',
+            bordercolor='rgba(128,128,128,0.5)',
             borderwidth=1,
             borderpad=4
         )
@@ -2935,59 +4087,1036 @@ def render_analytics_driver_subsection(year: str = "current"):
 
 def render_analytics_team_subsection(year: str = "current"):
     """
-    Team analytics subsection with placeholder content.
+    Team analytics subsection with all visualizations.
     
     Args:
         year: Season year to analyze
     """
     st.subheader("Team Analytics")
-    st.info("🚧 Team reliability metrics, development trends, and driver pairing analysis coming soon!")
     
-    # Team selector placeholder
-    st.selectbox(
+    # Fetch constructor standings to populate selector
+    constructor_standings = fetch_constructor_standings(year)
+    
+    if not constructor_standings:
+        st.error("Unable to load constructor standings. Please try again later.")
+        return
+    
+    # Create constructor options for selector
+    constructor_options = {}
+    for standing in constructor_standings:
+        constructor = standing.get('Constructor', {})
+        constructor_id = constructor.get('constructorId', '')
+        constructor_name = constructor.get('name', 'Unknown')
+        position = standing.get('position', 'N/A')
+        points = standing.get('points', '0')
+        
+        # Display format: "Red Bull (P1 - 860 pts)"
+        display_name = f"{constructor_name} (P{position} - {points} pts)"
+        constructor_options[display_name] = {
+            'constructor_id': constructor_id,
+            'constructor_name': constructor_name,
+            'position': position,
+            'points': points
+        }
+    
+    # Constructor selector
+    selected_display = st.selectbox(
         "Select Constructor",
-        options=["Coming soon..."],
+        options=list(constructor_options.keys()),
         key="team_analytics_selector",
         help="Select a constructor to view team performance analytics"
     )
+    
+    if not selected_display or selected_display not in constructor_options:
+        return
+    
+    selected_constructor = constructor_options[selected_display]
+    constructor_id = selected_constructor['constructor_id']
+    constructor_name = selected_constructor['constructor_name']
+    
+    st.markdown(f"### {constructor_name} - {year} Season")
+    
+    # Fetch constructor race results
+    with st.spinner(f"Loading race data for {constructor_name}..."):
+        try:
+            constructor_results = fetch_constructor_race_results(constructor_id, year)
+        except Exception as e:
+            st.error(f"❌ Error fetching race data: {str(e)}. The API may be temporarily unavailable. Please try again later.")
+            return
+    
+    if not constructor_results:
+        st.warning(f"⚠️ No race data available for {constructor_name} in {year}. This constructor may not have competed in this season, or the data is not yet available.")
+        return
+    
+    # Check if we have sufficient data
+    if len(constructor_results) < 3:
+        st.warning(f"⚠️ Limited data available: Only {len(constructor_results)} races found for {constructor_name} in {year}. Most analytics require more races for meaningful results.")
+    
+    # Calculate all analytics
+    try:
+        with st.spinner("Calculating team analytics..."):
+            # Team reliability metrics
+            reliability = calculate_analytics_team_reliability(constructor_results, year)
+            
+            # Constructor development trends
+            development = calculate_analytics_constructor_development(constructor_results, window_size=3)
+            
+            # Get driver pairing data - need to fetch individual driver results
+            # Extract drivers from first race
+            first_race = constructor_results[0] if constructor_results else None
+            drivers = []
+            if first_race:
+                results = first_race.get('Results', [])
+                for result in results:
+                    driver = result.get('Driver', {})
+                    driver_id = driver.get('driverId', '')
+                    driver_name = f"{driver.get('givenName', '')} {driver.get('familyName', '')}"
+                    if driver_id and driver_name:
+                        drivers.append({'id': driver_id, 'name': driver_name})
+            
+            # Fetch individual driver results for pairing analysis
+            driver_pairing = None
+            if len(drivers) >= 2:
+                driver1_results = fetch_driver_race_results(drivers[0]['id'], year)
+                driver2_results = fetch_driver_race_results(drivers[1]['id'], year)
+                
+                if driver1_results and driver2_results:
+                    driver_pairing = calculate_analytics_driver_pairing(
+                        driver1_results,
+                        driver2_results,
+                        drivers[0]['name'],
+                        drivers[1]['name']
+                    )
+    except Exception as e:
+        st.error(f"❌ Error calculating analytics: {str(e)}. Please try refreshing the page or selecting a different constructor.")
+        return
+    
+    # Display reliability metrics
+    st.markdown("#### Team Reliability Metrics")
+    if reliability:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Both Drivers Finished",
+                f"{reliability['both_finished_pct']:.1f}%",
+                help="Percentage of races where both drivers finished"
+            )
+        with col2:
+            st.metric(
+                "Avg Finish Position",
+                f"{reliability['avg_finish_position']:.2f}",
+                help="Average finishing position across both drivers"
+            )
+        with col3:
+            st.metric(
+                "Mechanical DNF Rate",
+                f"{reliability['mechanical_dnf_rate']:.1f}%",
+                help="Percentage of mechanical failures across both drivers"
+            )
+        
+        st.info(f"📊 Analysis based on {reliability['total_races']} races")
+    else:
+        st.warning("⚠️ Unable to calculate reliability metrics.")
+    
+    # Display development trends chart
+    st.markdown("#### Constructor Development Trends")
+    if development is not None and not development.empty:
+        # Create development trend chart
+        fig = go.Figure()
+        
+        # Add rolling average points trace
+        fig.add_trace(go.Scatter(
+            x=development['round'],
+            y=development['rolling_avg_points'],
+            mode='lines+markers',
+            name='Rolling Avg Points',
+            line=dict(color='#E10600', width=3),
+            marker=dict(size=8, color='#E10600'),
+            customdata=development[['race_name']].values,
+            hovertemplate=(
+                '<b>%{customdata[0]}</b><br>' +
+                'Round: %{x}<br>' +
+                'Avg Points: %{y:.2f}<br>' +
+                '<extra></extra>'
+            )
+        ))
+        
+        # Update layout
+        fig.update_layout(
+            title=f"{constructor_name} - Development Trend (3-Race Rolling Average)",
+            xaxis_title="Race Round",
+            yaxis_title="Rolling Average Points",
+            hovermode='closest',
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(size=12),
+            title_font=dict(size=16, color='#E10600'),
+            hoverlabel=dict(
+                bgcolor="white",
+                font_size=12,
+                font_family="sans-serif"
+            ),
+            xaxis=dict(
+                tickmode='linear',
+                tick0=1,
+                dtick=1,
+                gridcolor='rgba(128,128,128,0.2)'
+            ),
+            yaxis=dict(
+                gridcolor='rgba(128,128,128,0.2)'
+            ),
+            height=400
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Show trend classification
+        if not development.empty:
+            trend = development['trend_classification'].iloc[0]
+            if trend == 'improving':
+                st.success(f"📈 Trend: **{trend.capitalize()}** - Team performance is improving over the season")
+            elif trend == 'declining':
+                st.error(f"📉 Trend: **{trend.capitalize()}** - Team performance is declining over the season")
+            elif trend == 'stable':
+                st.info(f"➡️ Trend: **{trend.capitalize()}** - Team performance is stable throughout the season")
+            else:
+                st.warning(f"⚠️ Trend: **{trend}**")
+    else:
+        st.warning("⚠️ Insufficient data for development trends.")
+    
+    # Display driver pairing effectiveness
+    st.markdown("#### Driver Pairing Effectiveness")
+    if driver_pairing:
+        # Display driver names
+        st.markdown(f"**{driver_pairing['driver1_name']}** vs **{driver_pairing['driver2_name']}**")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Points Ratio",
+                driver_pairing['points_ratio'],
+                help="Points distribution between the two drivers"
+            )
+        with col2:
+            st.metric(
+                "Avg Qualifying Gap",
+                f"{driver_pairing['quali_gap']:.2f} positions",
+                help="Average gap in qualifying positions"
+            )
+        with col3:
+            st.metric(
+                "Avg Race Gap",
+                f"{driver_pairing['race_gap']:.2f} positions",
+                help="Average gap in race finishing positions"
+            )
+        
+        # Show balance flag
+        if driver_pairing['balance_flag'] == 'imbalanced':
+            st.warning(f"⚠️ **Imbalanced pairing** - One driver is significantly outperforming the other (>70:30 points ratio)")
+        elif driver_pairing['balance_flag'] == 'balanced':
+            st.success(f"✅ **Balanced pairing** - Both drivers are contributing relatively equally")
+        
+        # Create comparison chart
+        st.markdown("**Points Comparison:**")
+        comparison_df = pd.DataFrame({
+            'Driver': [driver_pairing['driver1_name'], driver_pairing['driver2_name']],
+            'Points': [driver_pairing['driver1_points'], driver_pairing['driver2_points']]
+        })
+        
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=comparison_df['Driver'],
+            y=comparison_df['Points'],
+            marker_color=['#E10600', '#1E41FF'],
+            text=comparison_df['Points'],
+            textposition='auto',
+            hovertemplate='<b>%{x}</b><br>Points: %{y:.1f}<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            title=f"Driver Points Comparison - {constructor_name}",
+            xaxis_title="Driver",
+            yaxis_title="Points",
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(size=12),
+            title_font=dict(size=16, color='#E10600'),
+            height=400
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        if len(drivers) < 2:
+            st.warning("⚠️ Unable to analyze driver pairing - insufficient driver data.")
+        else:
+            st.warning("⚠️ Unable to calculate driver pairing metrics.")
 
 
 def render_analytics_circuit_subsection(year: str = "current"):
     """
-    Circuit analytics subsection with placeholder content.
+    Circuit analytics subsection with circuit difficulty ratings and driver performance.
     
     Args:
         year: Season year to analyze
     """
     st.subheader("Circuit Analytics")
-    st.info("🚧 Circuit difficulty ratings and track-specific performance analysis coming soon!")
     
-    # Circuit selector placeholder
-    st.selectbox(
-        "Select Circuit",
-        options=["Coming soon..."],
-        key="circuit_analytics_selector",
-        help="Select a circuit to view track-specific analytics"
-    )
+    # Fetch all races to get circuit list and calculate difficulty
+    with st.spinner("Loading circuit data..."):
+        try:
+            all_races = fetch_all_races(year)
+        except Exception as e:
+            st.error(f"❌ Error fetching race data: {str(e)}. The API may be temporarily unavailable. Please try again later.")
+            return
+    
+    if not all_races:
+        st.warning(f"⚠️ No race data available for {year}. Please select a different season.")
+        return
+    
+    # Extract unique circuits from races
+    circuits = {}
+    for race in all_races:
+        circuit = race.get('Circuit', {})
+        circuit_name = circuit.get('circuitName', 'Unknown')
+        if circuit_name != 'Unknown' and circuit_name not in circuits:
+            circuits[circuit_name] = circuit
+    
+    if not circuits:
+        st.warning("⚠️ No circuits found in the race data.")
+        return
+    
+    # Calculate circuit difficulty ratings
+    with st.spinner("Calculating circuit difficulty ratings..."):
+        try:
+            difficulty_df = calculate_analytics_circuit_difficulty(all_races, [year])
+        except Exception as e:
+            st.error(f"❌ Error calculating circuit difficulty: {str(e)}")
+            return
+    
+    # Display circuit difficulty ratings table
+    st.markdown("#### Circuit Difficulty Ratings")
+    
+    if difficulty_df is not None and not difficulty_df.empty:
+        st.info("ℹ️ Difficulty score combines DNF rate and position volatility. Higher scores indicate more challenging circuits.")
+        
+        # Format the dataframe for display
+        display_df = difficulty_df.copy()
+        display_df.columns = ['Circuit', 'DNF Rate (%)', 'Avg Position Change', 'Difficulty Score', 'Races Analyzed']
+        
+        st.dataframe(
+            display_df,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Circuit": st.column_config.TextColumn("Circuit", width="medium"),
+                "DNF Rate (%)": st.column_config.NumberColumn("DNF Rate (%)", format="%.1f%%"),
+                "Avg Position Change": st.column_config.NumberColumn("Avg Position Change", format="%.2f"),
+                "Difficulty Score": st.column_config.ProgressColumn(
+                    "Difficulty Score",
+                    format="%.1f",
+                    min_value=0,
+                    max_value=100
+                ),
+                "Races Analyzed": st.column_config.NumberColumn("Races", format="%d")
+            }
+        )
+    else:
+        st.warning("⚠️ Unable to calculate circuit difficulty ratings.")
+    
+    # Driver-specific circuit performance section
+    st.markdown("---")
+    st.markdown("#### Driver Performance at Circuit")
+    
+    # Fetch driver standings to populate selector
+    driver_standings = fetch_driver_standings(year)
+    
+    if not driver_standings:
+        st.warning("⚠️ Unable to load driver standings for circuit performance analysis.")
+        return
+    
+    # Create driver options
+    driver_options = {}
+    for standing in driver_standings:
+        driver = standing.get('Driver', {})
+        driver_id = driver.get('driverId', '')
+        driver_name = f"{driver.get('givenName', '')} {driver.get('familyName', '')}"
+        constructor = standing.get('Constructors', [{}])[0]
+        team_name = constructor.get('name', 'Unknown')
+        
+        display_name = f"{driver_name} ({team_name})"
+        driver_options[display_name] = {
+            'driver_id': driver_id,
+            'driver_name': driver_name,
+            'team_name': team_name
+        }
+    
+    # Create two columns for selectors
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        selected_driver_display = st.selectbox(
+            "Select Driver",
+            options=list(driver_options.keys()),
+            key="circuit_driver_selector",
+            help="Select a driver to view their performance at a specific circuit"
+        )
+    
+    with col2:
+        selected_circuit = st.selectbox(
+            "Select Circuit",
+            options=sorted(circuits.keys()),
+            key="circuit_selector",
+            help="Select a circuit to view driver performance"
+        )
+    
+    if not selected_driver_display or not selected_circuit:
+        return
+    
+    selected_driver = driver_options[selected_driver_display]
+    driver_id = selected_driver['driver_id']
+    driver_name = selected_driver['driver_name']
+    
+    # Fetch driver's race results for the selected year
+    with st.spinner(f"Loading {driver_name}'s race data..."):
+        try:
+            driver_races = fetch_driver_race_results(driver_id, year)
+        except Exception as e:
+            st.error(f"❌ Error fetching driver race data: {str(e)}")
+            return
+    
+    if not driver_races:
+        st.warning(f"⚠️ No race data available for {driver_name} in {year}.")
+        return
+    
+    # Filter races for the selected circuit
+    circuit_races = [
+        race for race in driver_races
+        if race.get('Circuit', {}).get('circuitName', '') == selected_circuit
+    ]
+    
+    if not circuit_races:
+        st.info(f"ℹ️ {driver_name} did not race at {selected_circuit} in {year}.")
+        return
+    
+    # Calculate circuit-specific performance
+    with st.spinner("Calculating circuit performance..."):
+        try:
+            circuit_perf = calculate_analytics_circuit_performance(
+                circuit_races,
+                selected_circuit,
+                min_appearances=1  # Lower threshold for single season
+            )
+        except Exception as e:
+            st.error(f"❌ Error calculating circuit performance: {str(e)}")
+            return
+    
+    # Display circuit performance metrics
+    st.markdown(f"##### {driver_name} at {selected_circuit}")
+    
+    if circuit_perf['low_sample_warning'] and circuit_perf['appearances'] < 3:
+        st.warning(f"⚠️ Limited data: Only {circuit_perf['appearances']} race(s) at this circuit. Statistics may not be representative.")
+    
+    # Display metrics in columns
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if circuit_perf['avg_finish'] is not None:
+            st.metric(
+                "Avg Finish",
+                f"{circuit_perf['avg_finish']:.1f}",
+                help="Average finishing position at this circuit"
+            )
+        else:
+            st.metric(
+                "Avg Finish",
+                "N/A",
+                help="No finished races at this circuit"
+            )
+    
+    with col2:
+        st.metric(
+            "Win Rate",
+            f"{circuit_perf['win_rate']:.1f}%",
+            help="Percentage of races won at this circuit"
+        )
+    
+    with col3:
+        st.metric(
+            "Podium Rate",
+            f"{circuit_perf['podium_rate']:.1f}%",
+            help="Percentage of podium finishes at this circuit"
+        )
+    
+    with col4:
+        st.metric(
+            "Points Rate",
+            f"{circuit_perf['points_rate']:.1f}%",
+            help="Percentage of points-scoring finishes at this circuit"
+        )
+    
+    # Display race-by-race results at this circuit
+    st.markdown("##### Race Results at This Circuit")
+    
+    race_results_list = []
+    for race in circuit_races:
+        results = race.get('Results', [])
+        if results:
+            result = results[0]
+            race_results_list.append({
+                'Race': race.get('raceName', 'Unknown'),
+                'Date': race.get('date', 'Unknown'),
+                'Grid': result.get('grid', 'N/A'),
+                'Position': result.get('position', 'N/A'),
+                'Points': result.get('points', '0'),
+                'Status': result.get('status', 'Unknown')
+            })
+    
+    if race_results_list:
+        results_df = pd.DataFrame(race_results_list)
+        st.dataframe(
+            results_df,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Race": st.column_config.TextColumn("Race", width="medium"),
+                "Date": st.column_config.DateColumn("Date"),
+                "Grid": st.column_config.TextColumn("Grid", width="small"),
+                "Position": st.column_config.TextColumn("Finish", width="small"),
+                "Points": st.column_config.NumberColumn("Points", format="%d"),
+                "Status": st.column_config.TextColumn("Status", width="medium")
+            }
+        )
+    else:
+        st.info("No race results available.")
 
 
 def render_analytics_comparative_subsection(year: str = "current"):
     """
-    Comparative analytics subsection with placeholder content.
+    Comparative analytics subsection.
+    
+    Controls:
+    - Multi-select for drivers (3-10)
+    - Season selector (single or multi)
+    - Comparison type selector (current season vs season-over-season)
+    
+    Displays:
+    - Radar chart for multi-driver comparison
+    - Grouped bar charts for direct metric comparison
+    - Season-over-season line charts
+    - Percentile rankings
     
     Args:
         year: Season year to analyze
     """
-    st.subheader("Comparative Analytics")
-    st.info("🚧 Multi-driver comparisons, season-over-season analysis, and percentile rankings coming soon!")
+    st.subheader("⚔️ Comparative Analytics")
+    st.markdown("Compare multiple drivers across various performance metrics")
     
-    # Multi-select placeholder
-    st.multiselect(
-        "Select Drivers to Compare (3-10)",
-        options=["Coming soon..."],
-        key="comparative_analytics_selector",
-        help="Select multiple drivers for comparative analysis"
+    # Comparison type selector
+    comparison_type = st.radio(
+        "Comparison Type",
+        options=["Multi-Driver Comparison", "Season-Over-Season Analysis", "Percentile Rankings"],
+        horizontal=True,
+        key="comparative_type"
     )
+    
+    if comparison_type == "Multi-Driver Comparison":
+        render_multi_driver_comparison(year)
+    elif comparison_type == "Season-Over-Season Analysis":
+        render_season_comparison(year)
+    else:
+        render_percentile_rankings(year)
+
+
+def render_multi_driver_comparison(year: str = "current"):
+    """
+    Render multi-driver comparison section.
+    
+    Args:
+        year: Season year to analyze
+    """
+    st.markdown("### Multi-Driver Comparison")
+    st.markdown("Compare 3-10 drivers across standardized performance metrics")
+    
+    # Fetch driver standings to get driver list
+    with st.spinner("Loading driver list..."):
+        standings_data = fetch_driver_standings(year)
+    
+    if not standings_data:
+        st.error("Unable to load driver standings. Please try again later.")
+        return
+    
+    # Parse driver standings
+    standings = parse_driver_standings(standings_data)
+    
+    if not standings:
+        st.warning("No driver data available for the selected season.")
+        return
+    
+    # Create driver options (name and ID)
+    driver_options = {}
+    for driver in standings:
+        driver_name = f"{driver['driver_name']}"
+        driver_id = driver['driver_id']
+        driver_options[driver_name] = driver_id
+    
+    # Multi-select for drivers
+    selected_driver_names = st.multiselect(
+        "Select Drivers to Compare (3-10)",
+        options=list(driver_options.keys()),
+        default=list(driver_options.keys())[:3] if len(driver_options) >= 3 else list(driver_options.keys()),
+        key="multi_driver_selector",
+        help="Select between 3 and 10 drivers for comparison"
+    )
+    
+    # Validate selection
+    if len(selected_driver_names) < 3:
+        st.info("Please select at least 3 drivers for comparison.")
+        return
+    
+    if len(selected_driver_names) > 10:
+        st.warning("Please select no more than 10 drivers for comparison.")
+        return
+    
+    # Fetch race results for selected drivers
+    drivers_data = {}
+    
+    with st.spinner("Fetching race data for selected drivers..."):
+        for driver_name in selected_driver_names:
+            driver_id = driver_options[driver_name]
+            race_results = fetch_driver_race_results(driver_id, year)
+            
+            if race_results:
+                drivers_data[driver_name] = race_results
+    
+    if not drivers_data:
+        st.error("Unable to load race data for selected drivers.")
+        return
+    
+    # Calculate comparison metrics
+    with st.spinner("Calculating comparison metrics..."):
+        comparison_df = calculate_analytics_multi_driver_comparison(
+            drivers_data,
+            metrics=['avg_finish', 'points_per_race', 'consistency_score', 'dnf_rate']
+        )
+    
+    if comparison_df.empty:
+        st.warning("No comparison data available.")
+        return
+    
+    # Display metrics summary
+    st.markdown("#### Performance Metrics Summary")
+    st.dataframe(
+        comparison_df.style.format({
+            'avg_finish': '{:.2f}',
+            'points_per_race': '{:.2f}',
+            'consistency_score': '{:.1f}',
+            'dnf_rate': '{:.1f}%'
+        }).background_gradient(subset=['points_per_race', 'consistency_score'], cmap='RdYlGn'),
+        use_container_width=True
+    )
+    
+    # Normalize metrics for radar chart (0-100 scale)
+    radar_df = comparison_df.copy()
+    
+    # Invert avg_finish (lower is better) and scale to 0-100
+    if 'avg_finish' in radar_df.columns:
+        max_pos = 20
+        radar_df['avg_finish_normalized'] = radar_df['avg_finish'].apply(
+            lambda x: max(0, 100 - (x / max_pos * 100)) if pd.notna(x) else 0
+        )
+    
+    # Points per race - normalize to 0-100 (25 points = 100)
+    if 'points_per_race' in radar_df.columns:
+        radar_df['points_normalized'] = radar_df['points_per_race'].apply(
+            lambda x: min(100, (x / 25) * 100) if pd.notna(x) else 0
+        )
+    
+    # Consistency score is already 0-100
+    if 'consistency_score' in radar_df.columns:
+        radar_df['consistency_normalized'] = radar_df['consistency_score'].fillna(0)
+    
+    # Invert DNF rate (lower is better) and scale to 0-100
+    if 'dnf_rate' in radar_df.columns:
+        radar_df['reliability_normalized'] = radar_df['dnf_rate'].apply(
+            lambda x: max(0, 100 - x) if pd.notna(x) else 0
+        )
+    
+    # Create radar chart
+    st.markdown("#### Performance Radar Chart")
+    st.markdown("All metrics normalized to 0-100 scale (higher is better)")
+    
+    radar_metrics = ['avg_finish_normalized', 'points_normalized', 'consistency_normalized', 'reliability_normalized']
+    radar_metric_labels = ['Finishing Position', 'Points Scoring', 'Consistency', 'Reliability']
+    
+    # Prepare data for radar chart
+    radar_chart_df = radar_df[['driver_name'] + radar_metrics].copy()
+    radar_chart_df.columns = ['driver_name'] + radar_metric_labels
+    
+    fig_radar = create_analytics_radar_chart(
+        radar_chart_df,
+        radar_metric_labels,
+        selected_driver_names
+    )
+    
+    st.plotly_chart(fig_radar, use_container_width=True)
+    
+    # Create grouped bar chart for direct comparison
+    st.markdown("#### Direct Metric Comparison")
+    
+    fig_bars = create_analytics_grouped_bar_chart(
+        comparison_df,
+        'driver_name',
+        ['avg_finish', 'points_per_race', 'consistency_score'],
+        "Driver Performance Metrics"
+    )
+    
+    st.plotly_chart(fig_bars, use_container_width=True)
+    
+    # DNF Rate comparison
+    st.markdown("#### Reliability Comparison (DNF Rate)")
+    
+    fig_dnf = go.Figure()
+    
+    fig_dnf.add_trace(go.Bar(
+        x=comparison_df['driver_name'],
+        y=comparison_df['dnf_rate'],
+        marker=dict(
+            color=comparison_df['dnf_rate'],
+            colorscale='RdYlGn_r',
+            showscale=True,
+            colorbar=dict(title="DNF %")
+        ),
+        text=comparison_df['dnf_rate'].apply(lambda x: f"{x:.1f}%"),
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>DNF Rate: %{y:.1f}%<extra></extra>'
+    ))
+    
+    fig_dnf.update_layout(
+        title="DNF Rate by Driver (Lower is Better)",
+        xaxis_title="Driver",
+        yaxis_title="DNF Rate (%)",
+        showlegend=False,
+        height=400,
+        hovermode='x unified'
+    )
+    
+    st.plotly_chart(fig_dnf, use_container_width=True)
+
+
+def render_season_comparison(year: str = "current"):
+    """
+    Render season-over-season comparison section.
+    
+    Args:
+        year: Current season year
+    """
+    st.markdown("### Season-Over-Season Analysis")
+    st.markdown("Track driver or team performance evolution across multiple seasons")
+    
+    # Entity type selector
+    entity_type = st.radio(
+        "Compare",
+        options=["Driver", "Team"],
+        horizontal=True,
+        key="season_comparison_entity_type"
+    )
+    
+    # Season range selector
+    current_year = int(year) if year != "current" else 2024
+    available_years = list(range(2010, current_year + 1))
+    
+    selected_seasons = st.multiselect(
+        "Select Seasons to Compare",
+        options=available_years,
+        default=[current_year - 2, current_year - 1, current_year] if current_year >= 2012 else [current_year],
+        key="season_comparison_years",
+        help="Select 2 or more seasons for comparison"
+    )
+    
+    if len(selected_seasons) < 2:
+        st.info("Please select at least 2 seasons for comparison.")
+        return
+    
+    if entity_type == "Driver":
+        # Fetch driver list from most recent season
+        with st.spinner("Loading driver list..."):
+            standings_data = fetch_driver_standings(str(selected_seasons[-1]))
+        
+        if not standings_data:
+            st.error("Unable to load driver standings.")
+            return
+        
+        standings = parse_driver_standings(standings_data)
+        
+        if not standings:
+            st.warning("No driver data available.")
+            return
+        
+        # Create driver options
+        driver_options = {}
+        for driver in standings:
+            driver_name = driver['driver_name']
+            driver_id = driver['driver_id']
+            driver_options[driver_name] = driver_id
+        
+        # Driver selector
+        selected_driver_name = st.selectbox(
+            "Select Driver",
+            options=list(driver_options.keys()),
+            key="season_comparison_driver"
+        )
+        
+        if not selected_driver_name:
+            return
+        
+        driver_id = driver_options[selected_driver_name]
+        
+        # Fetch race results for each season
+        entity_results_by_season = {}
+        
+        with st.spinner(f"Fetching race data for {selected_driver_name} across {len(selected_seasons)} seasons..."):
+            for season in selected_seasons:
+                race_results = fetch_driver_race_results(driver_id, str(season))
+                if race_results:
+                    entity_results_by_season[str(season)] = race_results
+        
+        if not entity_results_by_season:
+            st.warning(f"No race data available for {selected_driver_name} in the selected seasons.")
+            return
+        
+        # Calculate season comparison
+        with st.spinner("Calculating season-over-season metrics..."):
+            comparison_df = calculate_analytics_season_comparison(
+                entity_results_by_season,
+                entity_type="driver"
+            )
+        
+        if comparison_df.empty:
+            st.warning("No comparison data available.")
+            return
+        
+        # Display metrics table
+        st.markdown(f"#### {selected_driver_name} - Season Performance")
+        
+        display_df = comparison_df[['season', 'avg_finish', 'total_points', 'points_per_race', 'consistency_score', 'yoy_change_pct']].copy()
+        
+        st.dataframe(
+            display_df.style.format({
+                'avg_finish': '{:.2f}',
+                'total_points': '{:.1f}',
+                'points_per_race': '{:.2f}',
+                'consistency_score': '{:.1f}',
+                'yoy_change_pct': '{:+.1f}%'
+            }).background_gradient(subset=['points_per_race'], cmap='RdYlGn'),
+            use_container_width=True
+        )
+        
+        # Create line charts for season progression
+        st.markdown("#### Performance Trends Across Seasons")
+        
+        # Points per race trend
+        fig_points = go.Figure()
+        
+        fig_points.add_trace(go.Scatter(
+            x=comparison_df['season'],
+            y=comparison_df['points_per_race'],
+            mode='lines+markers',
+            name='Points per Race',
+            line=dict(color='#E10600', width=3),
+            marker=dict(size=10),
+            hovertemplate='<b>Season %{x}</b><br>Points per Race: %{y:.2f}<extra></extra>'
+        ))
+        
+        fig_points.update_layout(
+            title=f"{selected_driver_name} - Points per Race by Season",
+            xaxis_title="Season",
+            yaxis_title="Points per Race",
+            height=400,
+            hovermode='x unified'
+        )
+        
+        st.plotly_chart(fig_points, use_container_width=True)
+        
+        # Average finish position trend
+        fig_finish = go.Figure()
+        
+        fig_finish.add_trace(go.Scatter(
+            x=comparison_df['season'],
+            y=comparison_df['avg_finish'],
+            mode='lines+markers',
+            name='Avg Finish Position',
+            line=dict(color='#0090FF', width=3),
+            marker=dict(size=10),
+            hovertemplate='<b>Season %{x}</b><br>Avg Finish: %{y:.2f}<extra></extra>'
+        ))
+        
+        fig_finish.update_layout(
+            title=f"{selected_driver_name} - Average Finish Position by Season",
+            xaxis_title="Season",
+            yaxis_title="Average Finish Position",
+            yaxis=dict(autorange='reversed'),  # Lower position is better
+            height=400,
+            hovermode='x unified'
+        )
+        
+        st.plotly_chart(fig_finish, use_container_width=True)
+        
+        # Consistency trend
+        if 'consistency_score' in comparison_df.columns:
+            fig_consistency = go.Figure()
+            
+            fig_consistency.add_trace(go.Scatter(
+                x=comparison_df['season'],
+                y=comparison_df['consistency_score'],
+                mode='lines+markers',
+                name='Consistency Score',
+                line=dict(color='#00D2BE', width=3),
+                marker=dict(size=10),
+                hovertemplate='<b>Season %{x}</b><br>Consistency: %{y:.1f}<extra></extra>'
+            ))
+            
+            fig_consistency.update_layout(
+                title=f"{selected_driver_name} - Consistency Score by Season",
+                xaxis_title="Season",
+                yaxis_title="Consistency Score (0-100)",
+                height=400,
+                hovermode='x unified'
+            )
+            
+            st.plotly_chart(fig_consistency, use_container_width=True)
+    
+    else:
+        st.info("Team season-over-season comparison coming soon!")
+
+
+def render_percentile_rankings(year: str = "current"):
+    """
+    Render percentile rankings section.
+    
+    Args:
+        year: Season year to analyze
+    """
+    st.markdown("### Percentile Rankings")
+    st.markdown("See how a driver ranks relative to the entire field")
+    
+    # Fetch driver standings
+    with st.spinner("Loading driver list..."):
+        standings_data = fetch_driver_standings(year)
+    
+    if not standings_data:
+        st.error("Unable to load driver standings.")
+        return
+    
+    standings = parse_driver_standings(standings_data)
+    
+    if not standings:
+        st.warning("No driver data available.")
+        return
+    
+    # Create driver options
+    driver_options = {}
+    for driver in standings:
+        driver_name = driver['driver_name']
+        driver_id = driver['driver_id']
+        driver_options[driver_name] = driver_id
+    
+    # Driver selector
+    selected_driver_name = st.selectbox(
+        "Select Driver",
+        options=list(driver_options.keys()),
+        key="percentile_driver"
+    )
+    
+    if not selected_driver_name:
+        return
+    
+    driver_id = driver_options[selected_driver_name]
+    
+    # Fetch race results for all drivers
+    all_drivers_results = {}
+    
+    with st.spinner("Fetching race data for all drivers..."):
+        for driver_name, driver_id in driver_options.items():
+            race_results = fetch_driver_race_results(driver_id, year)
+            if race_results:
+                all_drivers_results[driver_name] = race_results
+    
+    if not all_drivers_results:
+        st.error("Unable to load race data.")
+        return
+    
+    # Get target driver results
+    target_driver_id = driver_options[selected_driver_name]
+    driver_results = all_drivers_results.get(selected_driver_name)
+    
+    if not driver_results:
+        st.warning(f"No race data available for {selected_driver_name}.")
+        return
+    
+    # Calculate percentile rankings
+    with st.spinner("Calculating percentile rankings..."):
+        percentiles = calculate_analytics_percentile_rankings(
+            driver_results,
+            all_drivers_results,
+            year
+        )
+    
+    # Display field size info
+    st.info(f"Rankings calculated relative to {percentiles['field_size']} drivers who competed in at least 50% of races")
+    
+    # Display percentile metrics
+    st.markdown(f"#### {selected_driver_name} - Percentile Rankings")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric(
+            "Avg Finish Percentile",
+            f"{percentiles['avg_finish_percentile']:.1f}",
+            help="Higher percentile = better average finishing position"
+        )
+    
+    with col2:
+        st.metric(
+            "Points Percentile",
+            f"{percentiles['points_percentile']:.1f}",
+            help="Higher percentile = more points scored"
+        )
+    
+    with col3:
+        st.metric(
+            "Consistency Percentile",
+            f"{percentiles['consistency_percentile']:.1f}",
+            help="Higher percentile = more consistent performance"
+        )
+    
+    # Create horizontal percentile chart
+    st.markdown("#### Percentile Rankings Visualization")
+    
+    fig_percentile = create_analytics_horizontal_percentile_chart(
+        {
+            'Avg Finish': percentiles['avg_finish_percentile'],
+            'Points Scored': percentiles['points_percentile'],
+            'Consistency': percentiles['consistency_percentile']
+        },
+        selected_driver_name
+    )
+    
+    st.plotly_chart(fig_percentile, use_container_width=True)
+    
+    # Interpretation guide
+    with st.expander("📊 How to Interpret Percentile Rankings"):
+        st.markdown("""
+        **Percentile rankings show where a driver stands relative to the entire field:**
+        
+        - **90th percentile or above**: Elite performance, top 10% of the field
+        - **75th-89th percentile**: Strong performance, upper quartile
+        - **50th-74th percentile**: Above average performance
+        - **25th-49th percentile**: Below average performance
+        - **Below 25th percentile**: Lower quartile performance
+        
+        **Note**: Rankings are calculated only for drivers who competed in at least 50% of the season's races to ensure statistical validity.
+        """)
 
 
 def render_analytics_statistical_subsection(year: str = "current"):
