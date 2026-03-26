@@ -36,10 +36,10 @@ export default function AnalyticsPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-bold mb-6">Advanced Analytics - {selectedYear}</h1>
+      <h1 className="text-3xl font-display text-f1-white tracking-wider uppercase mb-6">Advanced Analytics - {selectedYear}</h1>
 
       {/* Tab Navigation */}
-      <div className="border-b border-gray-200 mb-6">
+      <div className="border-b border-f1-border mb-6">
         <nav className="-mb-px flex space-x-8">
           {tabs.map((tab) => (
             <button
@@ -50,7 +50,7 @@ export default function AnalyticsPage() {
                 ${
                   activeTab === tab.id
                     ? 'border-red-600 text-red-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-f1-border'
                 }
               `}
             >
@@ -63,7 +63,7 @@ export default function AnalyticsPage() {
       {/* Driver Selector */}
       {(activeTab === 'driver' || activeTab === 'comparative') && (
         <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-gray-300 mb-2">
             {activeTab === 'driver' ? 'Select Driver' : 'Select Drivers (2-5)'}
           </label>
           {standingsLoading ? (
@@ -74,7 +74,7 @@ export default function AnalyticsPage() {
                 <select
                   value={selectedDriver}
                   onChange={(e) => setSelectedDriver(e.target.value)}
-                  className="block w-full max-w-md px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500"
+                  className="block w-full max-w-md px-3 py-2 border border-f1-border rounded-md shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500"
                 >
                   <option value="">-- Select a driver --</option>
                   {standings?.map((s) => (
@@ -103,7 +103,7 @@ export default function AnalyticsPage() {
                           !comparisonDrivers.includes(s.Driver.driverId) &&
                           comparisonDrivers.length >= 5
                         }
-                        className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+                        className="rounded border-f1-border text-red-600 focus:ring-red-500"
                       />
                       <span className="text-sm">
                         {s.Driver.givenName} {s.Driver.familyName}
@@ -111,7 +111,7 @@ export default function AnalyticsPage() {
                     </label>
                   ))}
                   {comparisonDrivers.length > 0 && (
-                    <p className="text-xs text-gray-500 mt-2">
+                    <p className="text-xs text-gray-400 mt-2">
                       {comparisonDrivers.length} of 5 drivers selected
                     </p>
                   )}
@@ -152,7 +152,7 @@ function DriverAnalyticsSection({ driverId, year }: { driverId: string; year: st
 
   if (!driverId) {
     return (
-      <div className="text-center py-12 text-gray-500">
+      <div className="text-center py-12 text-gray-400">
         Please select a driver to view analytics
       </div>
     )
@@ -176,7 +176,7 @@ function DriverAnalyticsSection({ driverId, year }: { driverId: string; year: st
     <div className="space-y-8">
       {/* Performance Trends */}
       {trends && (
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="bg-transparent p-6 rounded-lg shadow">
           <h2 className="text-xl font-semibold mb-4">Performance Trends</h2>
           <LineChart
             data={[
@@ -198,24 +198,24 @@ function DriverAnalyticsSection({ driverId, year }: { driverId: string; year: st
 
       {/* Consistency Score */}
       {consistency && (
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="bg-transparent p-6 rounded-lg shadow">
           <h2 className="text-xl font-semibold mb-4">Consistency Score</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="text-center p-4 bg-gray-50 rounded">
-              <div className="text-3xl font-bold text-red-600">{consistency.consistency_score.toFixed(1)}</div>
-              <div className="text-sm text-gray-600 mt-1">Consistency Score</div>
+            <div className="text-center p-4 bg-[#292a2c]/40 rounded">
+              <div className="text-3xl font-display text-f1-white tracking-wider uppercase text-red-600">{consistency.consistency_score.toFixed(1)}</div>
+              <div className="text-sm text-gray-400 mt-1">Consistency Score</div>
             </div>
-            <div className="text-center p-4 bg-gray-50 rounded">
-              <div className="text-3xl font-bold text-gray-700">
+            <div className="text-center p-4 bg-[#292a2c]/40 rounded">
+              <div className="text-3xl font-display text-f1-white tracking-wider uppercase text-gray-300">
                 {consistency.avg_position.toFixed(1)}
               </div>
-              <div className="text-sm text-gray-600 mt-1">Average Position</div>
+              <div className="text-sm text-gray-400 mt-1">Average Position</div>
             </div>
-            <div className="text-center p-4 bg-gray-50 rounded">
-              <div className="text-3xl font-bold text-gray-700">
+            <div className="text-center p-4 bg-[#292a2c]/40 rounded">
+              <div className="text-3xl font-display text-f1-white tracking-wider uppercase text-gray-300">
                 {consistency.std_dev.toFixed(2)}
               </div>
-              <div className="text-sm text-gray-600 mt-1">Standard Deviation</div>
+              <div className="text-sm text-gray-400 mt-1">Standard Deviation</div>
             </div>
           </div>
         </div>
@@ -233,10 +233,10 @@ function DriverAnalyticsSection({ driverId, year }: { driverId: string; year: st
 
       {/* Form Indicator */}
       {form && (
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="bg-transparent p-6 rounded-lg shadow">
           <h2 className="text-xl font-semibold mb-4">Recent Form</h2>
           <div className="flex items-center space-x-4">
-            <div className="text-2xl font-bold">
+            <div className="text-2xl font-display text-f1-white tracking-wider uppercase">
               Trend:{' '}
               <span
                 className={
@@ -244,14 +244,14 @@ function DriverAnalyticsSection({ driverId, year }: { driverId: string; year: st
                     ? 'text-green-600'
                     : form.trend_direction === 'declining'
                     ? 'text-red-600'
-                    : 'text-gray-600'
+                    : 'text-gray-400'
                 }
               >
                 {form.trend_direction === 'improving' ? '↑' : form.trend_direction === 'declining' ? '↓' : '→'}{' '}
                 {form.trend_direction.toUpperCase()}
               </span>
             </div>
-            <div className="text-gray-600">
+            <div className="text-gray-400">
               Average: {form.avg_position.toFixed(1)}
             </div>
           </div>
@@ -260,22 +260,22 @@ function DriverAnalyticsSection({ driverId, year }: { driverId: string; year: st
 
       {/* DNF Rate */}
       {dnf && (
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="bg-transparent p-6 rounded-lg shadow">
           <h2 className="text-xl font-semibold mb-4">DNF Statistics</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="text-center p-4 bg-gray-50 rounded">
-              <div className="text-3xl font-bold text-red-600">
+            <div className="text-center p-4 bg-[#292a2c]/40 rounded">
+              <div className="text-3xl font-display text-f1-white tracking-wider uppercase text-red-600">
                 {dnf.dnf_percentage.toFixed(1)}%
               </div>
-              <div className="text-sm text-gray-600 mt-1">DNF Rate</div>
+              <div className="text-sm text-gray-400 mt-1">DNF Rate</div>
             </div>
-            <div className="text-center p-4 bg-gray-50 rounded">
-              <div className="text-3xl font-bold text-gray-700">{dnf.dnf_count}</div>
-              <div className="text-sm text-gray-600 mt-1">DNFs</div>
+            <div className="text-center p-4 bg-[#292a2c]/40 rounded">
+              <div className="text-3xl font-display text-f1-white tracking-wider uppercase text-gray-300">{dnf.dnf_count}</div>
+              <div className="text-sm text-gray-400 mt-1">DNFs</div>
             </div>
-            <div className="text-center p-4 bg-gray-50 rounded">
-              <div className="text-3xl font-bold text-gray-700">{dnf.total_races}</div>
-              <div className="text-sm text-gray-600 mt-1">Total Races</div>
+            <div className="text-center p-4 bg-[#292a2c]/40 rounded">
+              <div className="text-3xl font-display text-f1-white tracking-wider uppercase text-gray-300">{dnf.total_races}</div>
+              <div className="text-sm text-gray-400 mt-1">Total Races</div>
             </div>
           </div>
           <HorizontalBarChart
@@ -298,7 +298,7 @@ function DriverAnalyticsSection({ driverId, year }: { driverId: string; year: st
 // Team Analytics Section Component
 function TeamAnalyticsSection({ year }: { year: string }) {
   return (
-    <div className="text-center py-12 text-gray-500">
+    <div className="text-center py-12 text-gray-400">
       Team analytics coming soon. This will include team reliability, constructor development, and
       driver pairing analysis.
     </div>
@@ -308,7 +308,7 @@ function TeamAnalyticsSection({ year }: { year: string }) {
 // Circuit Analytics Section Component
 function CircuitAnalyticsSection({ year }: { year: string }) {
   return (
-    <div className="text-center py-12 text-gray-500">
+    <div className="text-center py-12 text-gray-400">
       Circuit analytics coming soon. This will include circuit performance and difficulty metrics.
     </div>
   )
@@ -330,7 +330,7 @@ function ComparativeAnalyticsSection({
 
   if (driverIds.length < 2) {
     return (
-      <div className="text-center py-12 text-gray-500">
+      <div className="text-center py-12 text-gray-400">
         Please select at least 2 drivers to compare
       </div>
     )
@@ -369,21 +369,21 @@ function ComparativeAnalyticsSection({
   return (
     <div className="space-y-8">
       {/* Radar Chart */}
-      <div className="bg-white p-6 rounded-lg shadow">
+      <div className="bg-transparent p-6 rounded-lg shadow">
         <h2 className="text-xl font-semibold mb-4">Multi-Dimensional Comparison</h2>
         <RadarChart data={radarData} title="Driver Performance Metrics" height={500} />
       </div>
 
       {/* Comparison Table */}
-      <div className="bg-white p-6 rounded-lg shadow">
+      <div className="bg-transparent p-6 rounded-lg shadow">
         <h2 className="text-xl font-semibold mb-4">Side-by-Side Metrics</h2>
         <DataTable data={tableData} columns={tableColumns} />
       </div>
 
       {/* Championship Projection - Placeholder */}
-      <div className="bg-white p-6 rounded-lg shadow">
+      <div className="bg-transparent p-6 rounded-lg shadow">
         <h2 className="text-xl font-semibold mb-4">Championship Projection</h2>
-        <p className="text-gray-500">
+        <p className="text-gray-400">
           Championship projection visualization will be displayed here.
         </p>
       </div>

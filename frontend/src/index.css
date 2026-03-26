@@ -2,16 +2,61 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer base {
+  body {
+    background-color: #121315;
+    color: #e3e2e5;
+    -webkit-font-smoothing: antialiased;
+    font-family: 'Inter', sans-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6, .font-display {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: bold;
+    letter-spacing: -0.025em;
+  }
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+@layer components {
+  /* Glassmorphism panel base */
+  .f1-panel {
+    background-color: rgba(31, 32, 34, 0.6);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-radius: 0.5rem;
+    border: 1px solid rgba(52, 53, 55, 0.3);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.25);
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .f1-panel-header {
+    padding: 1rem;
+    border-bottom: 1px solid rgba(52, 53, 55, 0.3);
+  }
+
+  /* Neon glow for active state */
+  .f1-glow {
+    box-shadow: 0 0 16px rgba(225, 6, 0, 0.25);
+  }
+  
+  .f1-text-glow {
+    text-shadow: 0 0 8px rgba(225, 6, 0, 0.4);
+  }
+}
+
+/* Custom scrollbar for dark mode */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }

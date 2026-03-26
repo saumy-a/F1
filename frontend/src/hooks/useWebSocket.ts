@@ -19,10 +19,18 @@ export const useWebSocket = (
   } = options
 
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected')
+  const [retryCount, setRetryCount] = useState(0)
   const wsRef = useRef<WebSocket | null>(null)
   const retryCountRef = useRef(0)
   const retryTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
   const pingTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
+
+  const pendingUpdatesRef = useRef({
+    positions: null as any[] | null,
+    intervals: null as any[] | null,
+    race_control: [] as any[],
+  })
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Store actions
   const updatePositions = useLiveRaceStore((s) => s.updatePositions)
@@ -47,6 +55,23 @@ export const useWebSocket = (
     }, 45000)
   }
 
+  const flushUpdates = () => {
+    const updates = pendingUpdatesRef.current
+    if (updates.positions) {
+      updatePositions(updates.positions)
+      updates.positions = null
+    }
+    if (updates.intervals) {
+      updateIntervals(updates.intervals)
+      updates.intervals = null
+    }
+    if (updates.race_control.length > 0) {
+      updates.race_control.forEach(msg => addRaceControlMessage(msg))
+      updates.race_control = []
+    }
+    debounceTimeoutRef.current = null
+  }
+
   const connect = () => {
     if (!sessionKey) return
 
@@ -63,6 +88,7 @@ export const useWebSocket = (
       setStatus('connected')
       setConnectionStatus(true)
       retryCountRef.current = 0 // Reset retry count on successful connection
+      setRetryCount(0)
       resetPingTimeout()
     }
 
@@ -71,7 +97,7 @@ export const useWebSocket = (
         const data: WebSocketMessage = JSON.parse(event.data)
         
         // Validate message structure before updating state
-        if (!data.type || !data.timestamp) {
+        if (!data.type) {
           console.warn('Invalid WebSocket message structure:', data)
           return
         }
@@ -92,14 +118,22 @@ export const useWebSocket = (
 
         // Handle data updates
         if (data.type === 'update') {
+          let hasUpdates = false
           if (data.positions && Array.isArray(data.positions)) {
-            updatePositions(data.positions)
+            pendingUpdatesRef.current.positions = data.positions
+            hasUpdates = true
           }
           if (data.intervals && Array.isArray(data.intervals)) {
-            updateIntervals(data.intervals)
+            pendingUpdatesRef.current.intervals = data.intervals
+            hasUpdates = true
           }
           if (data.race_control && Array.isArray(data.race_control)) {
-            data.race_control.forEach(msg => addRaceControlMessage(msg))
+            pendingUpdatesRef.current.race_control.push(...data.race_control)
+            hasUpdates = true
+          }
+          
+          if (hasUpdates && !debounceTimeoutRef.current) {
+            debounceTimeoutRef.current = setTimeout(flushUpdates, 250)
           }
         }
       } catch (error) {
@@ -133,6 +167,7 @@ export const useWebSocket = (
         
         retryTimeoutRef.current = setTimeout(() => {
           retryCountRef.current++
+          setRetryCount(retryCountRef.current)
           connect()
         }, delay)
       } else {
@@ -164,6 +199,9 @@ export const useWebSocket = (
       if (pingTimeoutRef.current) {
         clearTimeout(pingTimeoutRef.current)
       }
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current)
+      }
       if (wsRef.current) {
         wsRef.current.close()
         wsRef.current = null
@@ -171,6 +209,11 @@ export const useWebSocket = (
     }
   }, [sessionKey])
 
-  return { status }
+  return { 
+    status, 
+    retryCount,
+    reconnect: connect,
+    maxRetries
+  }
 }
 

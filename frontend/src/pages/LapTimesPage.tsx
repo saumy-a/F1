@@ -59,17 +59,17 @@ export default function LapTimesPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-bold mb-6">Lap Times Analysis - {selectedYear}</h1>
+      <h1 className="text-3xl font-display text-f1-white tracking-wider uppercase mb-6">Lap Times Analysis - {selectedYear}</h1>
       
       <div className="mb-6">
-        <label htmlFor="round-select" className="block text-sm font-medium text-gray-700 mb-2">
+        <label htmlFor="round-select" className="block text-sm font-medium text-gray-300 mb-2">
           Select Race
         </label>
         <select
           id="round-select"
           value={selectedRound}
           onChange={(e) => setSelectedRound(e.target.value)}
-          className="block w-full max-w-md px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-600 focus:border-red-600"
+          className="block w-full max-w-md px-3 py-2 border border-f1-border rounded-md shadow-sm focus:outline-none focus:ring-red-600 focus:border-red-600"
         >
           {races?.map((race) => (
             <option key={race.round} value={race.round}>
@@ -90,7 +90,7 @@ export default function LapTimesPage() {
       )}
 
       {chartData.length === 0 && (
-        <div className="text-center py-8 text-gray-500">
+        <div className="text-center py-8 text-gray-400">
           No lap time data available for this race
         </div>
       )}

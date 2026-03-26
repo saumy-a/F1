@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/cache/redis.py
+# hypothesis_version: 6.148.8
+
+[100, 3600, 'connected', 'default', 'error', 'hit_rate', 'hits', 'keys', 'keyspace', 'keyspace_hits', 'keyspace_misses', 'misses', 'stats', 'status', 'total_keys', 'unavailable']

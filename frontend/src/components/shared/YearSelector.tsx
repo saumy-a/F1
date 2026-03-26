@@ -10,7 +10,7 @@ export function YearSelector() {
     <select
       value={selectedYear}
       onChange={(e) => setSelectedYear(e.target.value)}
-      className="px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-f1-red focus:border-f1-red"
+      className="px-3 py-2 border border-f1-border rounded-md shadow-sm focus:outline-none focus:ring-f1-red focus:border-f1-red"
     >
       {years.map((year) => (
         <option key={year} value={year.toString()}>

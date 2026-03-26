@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/config.py
+# hypothesis_version: 6.148.8
+
+[6379, '%Y-%m-%d %H:%M:%S', '.env', '2.0', 'F1 Dashboard API', 'INFO', 'localhost', 'request_id', 'system']

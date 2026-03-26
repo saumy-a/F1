@@ -1,10 +1,16 @@
 import { apiClient } from './client'
-import type { SessionInfo, Driver, Position, Interval, Weather, Stint, PitStop, RaceControlMessage } from '../types/live'
+import type { SessionInfo, Driver, Position, Interval, Weather, Stint, PitStop, RaceControlMessage, TeamRadio } from '../types/live'
 
 export const liveApi = {
   // Get current session info
   getCurrentSession: async (): Promise<SessionInfo> => {
     const response = await apiClient.get<SessionInfo>('/api/live/session')
+    return response.data
+  },
+
+  // Get specific session info
+  getSessionByKey: async (sessionKey: string): Promise<SessionInfo> => {
+    const response = await apiClient.get<SessionInfo>(`/api/live/session/${sessionKey}`)
     return response.data
   },
 
@@ -51,8 +57,8 @@ export const liveApi = {
   },
 
   // Get team radio (path parameter)
-  getTeamRadio: async (sessionKey: string) => {
-    const response = await apiClient.get(`/api/live/radio/${sessionKey}`)
+  getTeamRadio: async (sessionKey: string): Promise<TeamRadio[]> => {
+    const response = await apiClient.get<TeamRadio[]>(`/api/live/radio/${sessionKey}`)
     return response.data
   },
 

@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/models/live.py
+# hypothesis_version: 6.148.8
+
+['Air pressure in mbar', 'Broadcast name', 'Circuit location', 'Country name', 'Current position', 'Current positions', 'Driver headshot URL', "Driver's race number", 'Drivers in session', 'Error message if any', 'Full name', 'GMT offset', 'Humidity percentage', 'Meeting key', 'Message scope', 'Message text', 'Pit stops', 'Session identifier', 'Session key', 'Session type', 'Short circuit name', 'Stint number', 'Team color hex code', 'Team name', 'Three-letter acronym', 'Time intervals', 'Timestamp of message', 'Tire stints', 'Weather conditions', 'Wind speed in m/s', 'session_key']

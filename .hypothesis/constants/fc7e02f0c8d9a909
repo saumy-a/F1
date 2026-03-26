@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/utils/helpers.py
+# hypothesis_version: 6.148.8
+
+[0.0, '+', 'Accident', 'Brakes', 'Clutch', 'Collision', 'Electrical', 'Engine', 'Fuel pressure', 'Gearbox', 'Hydraulics', 'Mechanical', 'Overheating', 'R', 'Retired', 'Spun off', 'Suspension', 'Transmission', 'W']

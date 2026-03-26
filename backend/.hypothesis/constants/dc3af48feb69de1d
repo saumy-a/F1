@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/main.py
+# hypothesis_version: 6.148.8
+
+['*', '/', '/api', '/docs', '/health', 'F1 Dashboard API', 'app', 'docs', 'health', 'healthy', 'message', 'root', 'standings', 'status', 'version']

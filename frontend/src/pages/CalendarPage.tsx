@@ -22,9 +22,9 @@ export default function CalendarPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-bold mb-6">Race Calendar - {selectedYear}</h1>
+      <h1 className="text-3xl font-display text-f1-white tracking-wider uppercase mb-6">Race Calendar - {selectedYear}</h1>
       
-      <div className="mb-4 text-gray-600">
+      <div className="mb-4 text-gray-400">
         {races?.length || 0} races scheduled
       </div>
 

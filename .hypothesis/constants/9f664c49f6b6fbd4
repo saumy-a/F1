@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/models/standings.py
+# hypothesis_version: 6.148.8
+
+['Driver information', 'Number of race wins', 'Total points scored', 'points', 'position', 'wins']

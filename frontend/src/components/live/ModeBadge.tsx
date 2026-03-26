@@ -15,12 +15,12 @@ export function ModeBadge({ mode, sessionInfo }: ModeBadgeProps) {
     },
     upcoming: {
       bg: 'bg-amber-500',
-      text: 'text-gray-900',
+      text: 'text-f1-white',
       label: 'UPCOMING',
       pulse: false
     },
     replay: {
-      bg: 'bg-blue-600',
+      bg: 'bg-f1-red f1-glow',
       text: 'text-white',
       label: `REPLAY — ${sessionInfo.circuit_short_name} ${new Date(sessionInfo.date_start).getFullYear()}`,
       pulse: false
@@ -37,8 +37,8 @@ export function ModeBadge({ mode, sessionInfo }: ModeBadgeProps) {
     >
       {badge.pulse && (
         <span className="relative flex h-3 w-3">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
-          <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-transparent opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-transparent"></span>
         </span>
       )}
       <span className="font-semibold text-sm">{badge.label}</span>

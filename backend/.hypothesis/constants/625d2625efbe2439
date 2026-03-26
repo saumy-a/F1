@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/models/standings.py
+# hypothesis_version: 6.148.8
+
+['1', '19', '21', '33', '575', '860', 'Austrian', 'Constructor', 'Constructors', 'Driver', 'Driver information', 'Dutch', 'Max', 'Number of race wins', 'Red Bull', 'Total points scored', 'VER', 'Verstappen', 'code', 'constructorId', 'driverId', 'example', 'familyName', 'givenName', 'max_verstappen', 'name', 'nationality', 'permanentNumber', 'points', 'position', 'red_bull', 'wins']

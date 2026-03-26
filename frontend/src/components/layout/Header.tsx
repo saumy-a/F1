@@ -8,7 +8,7 @@ export function Header() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link to="/" className="flex items-center space-x-2">
-            <div className="text-2xl font-bold text-f1-red">F1</div>
+            <div className="text-2xl font-display text-f1-white tracking-wider uppercase text-f1-red">F1</div>
             <div className="text-xl font-semibold">Dashboard</div>
           </Link>
           

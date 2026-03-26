@@ -53,17 +53,17 @@ export default function RacesPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-bold mb-6">Race Results - {selectedYear}</h1>
+      <h1 className="text-3xl font-display text-f1-white tracking-wider uppercase mb-6">Race Results - {selectedYear}</h1>
       
       <div className="mb-6">
-        <label htmlFor="round-select" className="block text-sm font-medium text-gray-700 mb-2">
+        <label htmlFor="round-select" className="block text-sm font-medium text-gray-300 mb-2">
           Select Race
         </label>
         <select
           id="round-select"
           value={selectedRound}
           onChange={(e) => setSelectedRound(e.target.value)}
-          className="block w-full max-w-md px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-red-600 focus:border-red-600"
+          className="block w-full max-w-md px-3 py-2 border border-f1-border rounded-md shadow-sm focus:outline-none focus:ring-red-600 focus:border-red-600"
         >
           {races?.map((race) => (
             <option key={race.round} value={race.round}>
@@ -75,7 +75,7 @@ export default function RacesPage() {
 
       <div className="mb-4">
         <h2 className="text-xl font-semibold">{raceResult.raceName}</h2>
-        <p className="text-gray-600">
+        <p className="text-gray-400">
           {raceResult.Circuit.circuitName} - {raceResult.date}
         </p>
       </div>

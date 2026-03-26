@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/models/analytics.py
+# hypothesis_version: 6.148.8
+
+[100, 'Circuit identifier', 'DNF causes breakdown', 'Driver identifier', 'Number of DNFs', 'Season year', 'Total DNFs', 'Total points scored', 'Total race entries', 'Total races entered']

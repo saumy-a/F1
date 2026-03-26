@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.94.5",
+    "@types/react-window": "^1.8.8",
     "axios": "^1.13.6",
     "plotly.js": "^3.4.0",
     "plotly.js-dist-min": "^3.4.0",
@@ -24,6 +25,7 @@
     "react-dom": "^19.2.4",
     "react-plotly.js": "^2.6.0",
     "react-router-dom": "^7.13.1",
+    "react-window": "^2.2.7",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

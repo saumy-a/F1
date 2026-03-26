@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/routers/live.py
+# hypothesis_version: 6.148.8
+
+[404, 500, '/live/aggregate', '/live/drivers', '/live/session', '/live/sessions', 'Get live intervals', 'Get live positions', 'Get pit stops', 'Get session drivers', 'Get sessions by year', 'Get starting grid', 'Get team radio', 'Get tire stints', 'mode', 'request_id', 'session_key']

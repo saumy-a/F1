@@ -15,8 +15,8 @@ export default function DriverStandingsPage() {
   if (!standings || standings.length === 0) {
     return (
       <div className="p-6">
-        <h1 className="text-3xl font-bold mb-6">Driver Standings - {selectedYear}</h1>
-        <div className="text-center py-12 text-gray-500">
+        <h1 className="text-3xl font-display text-f1-white tracking-wider uppercase mb-6">Driver Standings - {selectedYear}</h1>
+        <div className="text-center py-12 text-gray-400">
           No driver standings data available for {selectedYear}
         </div>
       </div>
@@ -60,7 +60,7 @@ export default function DriverStandingsPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-bold mb-6">Driver Standings - {selectedYear}</h1>
+      <h1 className="text-3xl font-display text-f1-white tracking-wider uppercase mb-6">Driver Standings - {selectedYear}</h1>
       
       <div className="mb-8">
         <h2 className="text-xl font-semibold mb-4">Standings Table</h2>

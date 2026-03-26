@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/routers/races.py
+# hypothesis_version: 6.148.8
+
+[404, 500, 3600, '/races/{year}', 'Get lap times', 'Get race results', 'Get race schedule', 'jolpica', 'request_id']

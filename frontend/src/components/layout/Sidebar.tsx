@@ -24,7 +24,7 @@ export function Sidebar() {
   const location = useLocation()
   
   return (
-    <aside className="w-64 bg-white border-r border-gray-200 min-h-screen">
+    <aside className="w-64 bg-transparent border-r border-f1-border min-h-screen">
       <nav className="p-4 space-y-1">
         {navItems.map((item) => {
           const isActive = location.pathname === item.path
@@ -35,7 +35,7 @@ export function Sidebar() {
               className={`block px-4 py-2 rounded-md transition-colors ${
                 isActive
                   ? 'bg-f1-red text-white'
-                  : 'text-gray-700 hover:bg-gray-100'
+                  : 'text-gray-300 hover:bg-gray-100'
               }`}
             >
               {item.label}

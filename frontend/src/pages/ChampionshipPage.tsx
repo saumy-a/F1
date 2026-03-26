@@ -32,9 +32,9 @@ export default function ChampionshipPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-bold mb-6">Championship Progression - {selectedYear}</h1>
+      <h1 className="text-3xl font-display text-f1-white tracking-wider uppercase mb-6">Championship Progression - {selectedYear}</h1>
       
-      <div className="mb-4 text-gray-600">
+      <div className="mb-4 text-gray-400">
         Championship points progression throughout the season
       </div>
 
@@ -47,7 +47,7 @@ export default function ChampionshipPage() {
           height={600}
         />
       ) : (
-        <div className="text-center py-8 text-gray-500">
+        <div className="text-center py-8 text-gray-400">
           No championship data available
         </div>
       )}

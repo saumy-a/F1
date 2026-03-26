@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/routers/ws.py
+# hypothesis_version: 6.148.8
+
+[1008, '/live', '/live/{session_key}', 'connected', 'error', 'live', 'message', 'mode', 'pong', 'session_info', 'session_key', 'type']

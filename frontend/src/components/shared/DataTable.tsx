@@ -24,21 +24,21 @@ export function DataTable<T extends Record<string, any>>({ data, columns, classN
   return (
     <div className={`overflow-x-auto ${className}`}>
       <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+        <thead className="bg-[#292a2c]/40">
           <tr>
             {columns.map((column, index) => (
               <th
                 key={index}
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider"
               >
                 {column.header}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="bg-white divide-y divide-gray-200">
+        <tbody className="bg-transparent divide-y divide-f1-border/50">
           {data.map((row, rowIndex) => (
-            <tr key={rowIndex} className="hover:bg-gray-50">
+            <tr key={rowIndex} className="hover:bg-[#292a2c]/40">
               {columns.map((column, colIndex) => (
                 <td key={colIndex} className={`px-6 py-4 whitespace-nowrap text-sm ${column.className || ''}`}>
                   {getCellValue(row, column)}
@@ -49,7 +49,7 @@ export function DataTable<T extends Record<string, any>>({ data, columns, classN
         </tbody>
       </table>
       {data.length === 0 && (
-        <div className="text-center py-8 text-gray-500">
+        <div className="text-center py-8 text-gray-400">
           No data available
         </div>
       )}

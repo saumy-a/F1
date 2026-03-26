@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/routers/analytics.py
+# hypothesis_version: 6.148.8
+
+[0.7, 400, 404, 422, 500, 600, '%Y-%m-%d', '/analytics/compare', '9999-12-31', 'Circuit', 'Get DNF rate', 'Get form indicator', 'Get team reliability', 'Season year', 'Unknown', 'analytics', 'avg_finish', 'circuitName', 'circuit_id', 'confidence', 'consistency_score', 'data', 'date', 'dnf_rate', 'driver_name', 'drivers', 'list', 'metrics', 'performances', 'points_per_race', 'projected_points', 'projected_winner', 'projections', 'raceName', 'races_remaining', 'records', 'request_id']

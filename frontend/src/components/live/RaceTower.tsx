@@ -19,7 +19,7 @@ function TireIndicator({ compound }: { compound?: string }) {
     MEDIUM: 'bg-yellow-400',
     HARD: 'bg-gray-400',
     INTERMEDIATE: 'bg-green-500',
-    WET: 'bg-blue-500'
+    WET: 'bg-f1-red/10 border-f1-red/200'
   }
   
   return (
@@ -66,7 +66,7 @@ export const RaceTower = React.memo(function RaceTower() {
   }
   
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
+    <div className="f1-panel">
       <div className="bg-gray-800 text-white px-4 py-3 font-semibold">
         Race Tower
       </div>
@@ -75,7 +75,7 @@ export const RaceTower = React.memo(function RaceTower() {
         {raceOrder.map((entry) => (
           <div
             key={entry.driver_number}
-            className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50 transition-colors"
+            className="flex items-center gap-4 px-4 py-3 hover:bg-[#292a2c]/40 transition-colors"
           >
             {/* Position */}
             <div className="w-8 text-center font-bold text-lg">
@@ -83,7 +83,7 @@ export const RaceTower = React.memo(function RaceTower() {
             </div>
             
             {/* Driver number */}
-            <div className="w-10 text-center font-semibold text-gray-700">
+            <div className="w-10 text-center font-semibold text-gray-300">
               {entry.driver_number}
             </div>
             
@@ -93,7 +93,7 @@ export const RaceTower = React.memo(function RaceTower() {
               style={{ backgroundColor: entry.team_colour ? `#${entry.team_colour}20` : '#f3f4f6' }}
             >
               <div className="font-semibold">{entry.broadcast_name || `Driver ${entry.driver_number}`}</div>
-              <div className="text-sm text-gray-600">{entry.team_name || 'Unknown Team'}</div>
+              <div className="text-sm text-gray-400">{entry.team_name || 'Unknown Team'}</div>
             </div>
             
             {/* Gap to leader */}
@@ -102,7 +102,7 @@ export const RaceTower = React.memo(function RaceTower() {
             </div>
             
             {/* Interval to car ahead */}
-            <div className="w-24 text-right text-sm text-gray-600">
+            <div className="w-24 text-right text-sm text-gray-400">
               {entry.position === 1 ? '—' : formatGap(entry.interval, false)}
             </div>
             
@@ -118,7 +118,7 @@ export const RaceTower = React.memo(function RaceTower() {
       </div>
       
       {raceOrder.length === 0 && (
-        <div className="px-4 py-8 text-center text-gray-500">
+        <div className="px-4 py-8 text-center text-gray-400">
           No race data available
         </div>
       )}

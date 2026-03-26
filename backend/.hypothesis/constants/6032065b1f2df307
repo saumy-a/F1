@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/models/common.py
+# hypothesis_version: 6.148.8
+
+['1997-09-30', '33', 'Austrian', 'Constructor name', "Driver's first name", "Driver's last name", "Driver's nationality", 'Dutch', 'Max', 'Red Bull', 'VER', 'Verstappen', 'code', 'constructorId', 'dateOfBirth', 'driverId', 'example', 'familyName', 'givenName', 'max_verstappen', 'name', 'nationality', 'permanentNumber', 'red_bull', 'url']

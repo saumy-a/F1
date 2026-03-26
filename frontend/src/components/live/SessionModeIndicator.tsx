@@ -6,9 +6,9 @@ export const SessionModeIndicator = () => {
 
   if (!sessionMode) {
     return (
-      <div className="bg-gray-100 border border-gray-300 rounded-lg px-4 py-2 inline-flex items-center gap-2">
+      <div className="bg-gray-100 border border-f1-border rounded-lg px-4 py-2 inline-flex items-center gap-2">
         <div className="w-3 h-3 rounded-full bg-gray-400"></div>
-        <span className="text-sm font-medium text-gray-600">No Active Session</span>
+        <span className="text-sm font-medium text-gray-400">No Active Session</span>
       </div>
     )
   }
@@ -23,10 +23,10 @@ export const SessionModeIndicator = () => {
       pulse: true,
     },
     upcoming: {
-      color: 'bg-blue-500',
-      bgColor: 'bg-blue-50',
+      color: 'bg-f1-red/10 border-f1-red/200',
+      bgColor: 'bg-f1-red/10 border-f1-red/20',
       borderColor: 'border-blue-300',
-      textColor: 'text-blue-700',
+      textColor: 'text-f1-red/80',
       label: 'UPCOMING',
       pulse: false,
     },
@@ -66,7 +66,7 @@ export const SessionModeIndicator = () => {
 
       {/* Connection Status (only show for live/replay) */}
       {(sessionMode === 'live' || sessionMode === 'replay') && (
-        <div className="text-sm text-gray-600 flex items-center gap-1">
+        <div className="text-sm text-gray-400 flex items-center gap-1">
           <span>{statusInfo.icon}</span>
           <span>{statusInfo.text}</span>
         </div>

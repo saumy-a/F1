@@ -1,0 +1,4 @@
+# file: /Users/saumya/F1/backend/app/services/jolpica.py
+# hypothesis_version: 6.148.8
+
+[1.0, 10.0, 100, 500, 3600, 'ConstructorStandings', 'DriverStandings', 'Laps', 'MRData', 'RaceTable', 'Races', 'StandingsLists', 'StandingsTable', 'Timings', 'current', 'driverId', 'jolpica', 'lap', 'number', 'position', 'time']

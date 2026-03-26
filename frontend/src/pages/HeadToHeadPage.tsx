@@ -81,18 +81,18 @@ export default function HeadToHeadPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-3xl font-bold mb-6">Head to Head Comparison - {selectedYear}</h1>
+      <h1 className="text-3xl font-display text-f1-white tracking-wider uppercase mb-6">Head to Head Comparison - {selectedYear}</h1>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <div>
-          <label htmlFor="driver1-select" className="block text-sm font-medium text-gray-700 mb-2">
+          <label htmlFor="driver1-select" className="block text-sm font-medium text-gray-300 mb-2">
             Select Driver 1
           </label>
           <select
             id="driver1-select"
             value={driver1Id}
             onChange={(e) => setDriver1Id(e.target.value)}
-            className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-f1-red focus:border-f1-red"
+            className="block w-full px-3 py-2 border border-f1-border rounded-md shadow-sm focus:outline-none focus:ring-f1-red focus:border-f1-red"
           >
             <option value="">-- Select Driver --</option>
             {standings?.map((standing) => (
@@ -104,14 +104,14 @@ export default function HeadToHeadPage() {
         </div>
 
         <div>
-          <label htmlFor="driver2-select" className="block text-sm font-medium text-gray-700 mb-2">
+          <label htmlFor="driver2-select" className="block text-sm font-medium text-gray-300 mb-2">
             Select Driver 2
           </label>
           <select
             id="driver2-select"
             value={driver2Id}
             onChange={(e) => setDriver2Id(e.target.value)}
-            className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-f1-red focus:border-f1-red"
+            className="block w-full px-3 py-2 border border-f1-border rounded-md shadow-sm focus:outline-none focus:ring-f1-red focus:border-f1-red"
           >
             <option value="">-- Select Driver --</option>
             {standings?.map((standing) => (
@@ -140,7 +140,7 @@ export default function HeadToHeadPage() {
           </div>
         </>
       ) : (
-        <div className="text-center py-8 text-gray-500">
+        <div className="text-center py-8 text-gray-400">
           Select two drivers to compare
         </div>
       )}
